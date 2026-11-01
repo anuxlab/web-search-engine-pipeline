@@ -1,117 +1,122 @@
 # DuckDuckGo Web Search Collector
 
-A small, manually triggered GitHub Actions pipeline that collects DuckDuckGo
-text-search result metadata and publishes JSON/CSV files as a workflow artifact.
+A manual-only GitHub Actions pipeline that collects DuckDuckGo text-search
+results, preserves the raw provider response, creates a normalized unique
+dataset, logs each run, and commits the run archive back to the repository.
 
-**Initial scope:** search-result collection only. This project does not crawl
-webpages, download PDFs, extract full article text, summarize content, or use an
-LLM.
+## What changed in this version
 
-## Features
+Every workflow execution creates a permanent run directory under `runs/`.
+The runner commits that directory to the branch from which the workflow was
+manually dispatched. It also uploads the same directory as a downloadable
+GitHub Actions artifact (90-day retention).
 
-- Manual-only GitHub Actions execution (`workflow_dispatch`).
-- Search query entered at run time.
-- Dropdown result limits: **10, 30, 50, 100, 200, 500**.
-- Region dropdown: India, US, UK, or worldwide.
-- Explicit DuckDuckGo backend selection.
-- URL normalization and duplicate removal.
-- JSON, CSV, and human-readable summary outputs.
-- Artifact upload even when the collector fails, where output files were created.
-- Basic unit tests that mock the search provider (no network required).
+Each run archive contains:
 
-## Repository layout
+| File | Purpose |
+|---|---|
+| `raw_results.json` | Page-by-page raw provider dictionaries plus flattened raw records, before cleaning |
+| `cleaned_results.json` | Normalized, unique records |
+| `cleaned_results.csv` | Spreadsheet export of the cleaned records |
+| `run.log` | Runner environment, dependency installation output, and collector console logs |
+| `collector.log` | Python application log |
+| `metadata.json` | Workflow run ID, attempt, actor, branch, commit and inputs |
+| `summary.txt` | Requested count, raw count, cleaned count and status |
+
+The Actions UI remains the authoritative place for the complete platform-level
+job log (checkout/setup/action internals). The archived `run.log` captures the
+commands and Python collection activity executed in the collector shell step.
+
+## Workflow inputs
+
+- Search query (required text)
+- Result maximum: `10`, `30`, `50`, `100`, `200`, `500`
+- Region: `in-en`, `us-en`, `uk-en`, `wt-wt`
+- Page size: `10`, `20`, `25`, `30`, or `50` results per request
+- Sequential pagination, exponential retries, inter-page delay, and duplicate-page detection
+
+Only `workflow_dispatch` is configured; pushes and pull requests do not start
+this workflow.
+
+## Repository structure
 
 ```text
-duckduckgo-search-pipeline/
-├── .github/
-│   └── workflows/
-│       └── duckduckgo-search.yml
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── DATA_DICTIONARY.md
-│   ├── OPERATIONS.md
-│   └── LIMITATIONS.md
-├── outputs/
-│   └── .gitkeep
-├── src/
-│   └── search_collector.py
-├── tests/
-│   └── test_search_collector.py
-├── requirements-dev.txt
-├── requirements.txt
-└── README.md
+.github/workflows/duckduckgo-search.yml
+src/search_collector.py
+tests/test_search_collector.py
+docs/
+  ARCHITECTURE.md
+  DATA_DICTIONARY.md
+  OPERATIONS.md
+  LIMITATIONS.md
+runs/
+  YYYY/MM/DD/<run-id>-attempt-<n>-<query-slug>/
+    raw_results.json
+    cleaned_results.json
+    cleaned_results.csv
+    run.log
+    collector.log
+    metadata.json
+    summary.txt
 ```
 
-## Run it in GitHub
+## Setup and execution
 
-1. Create a GitHub repository and add these files, preserving their paths.
-2. Push the repository's default branch.
-3. Open **Actions** in the repository.
-4. Select **DuckDuckGo Web Search Collector**.
-5. Click **Run workflow**.
-6. Enter a search phrase, select the maximum result count and region, then run.
-7. Open the completed workflow run and download the artifact named
-   `duckduckgo-results-<run number>`.
+1. Add the project files to a GitHub repository and push the default branch.
+2. In repository **Settings → Actions → General → Workflow permissions**, allow
+   **Read and write permissions**. This is required for the runner's commit.
+3. Open **Actions → DuckDuckGo Web Search Collector → Run workflow**.
+4. Enter a query and select the result maximum, region, and page size.
+5. After completion, inspect the `runs/` directory in the repository or download
+   the workflow artifact.
 
-The workflow is deliberately not configured for `push`, `pull_request`, cron,
-or other automatic triggers.
+The workflow uses the built-in `GITHUB_TOKEN`; no personal access token or
+search API key is required.
 
-## Run locally
+## Branch and repository requirements
 
-Requires Python 3.11 or newer.
+- The run archive is committed to the same branch selected in the manual
+  workflow dispatch (`github.ref_name`).
+- The selected branch must allow pushes from `GITHUB_TOKEN`. Branch protection
+  rules requiring a pull request or blocking GitHub Actions writes can prevent
+  the commit.
+- Commits made using `GITHUB_TOKEN` do not trigger another workflow run, which
+  prevents a push-trigger loop. This workflow is manual-only in any case.
+- Concurrent runs on the same branch are serialized by the workflow concurrency
+  group to reduce push races.
+
+## Local execution
+
+Python 3.11+:
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate       # macOS/Linux
-# .venv\Scripts\activate        # Windows
-
+source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 
 python src/search_collector.py \
   --query "electric vehicle routing problem" \
   --limit 50 \
   --region in-en \
-  --output outputs
-```
+  --page-size 25 \
+  --page-delay 1.0 \
+  --output outputs/local-test
 
-Generated files:
-
-- `outputs/search_results.json`
-- `outputs/search_results.csv`
-- `outputs/summary.txt`
-
-Run tests:
-
-```bash
 pytest -q
 ```
 
-## Search limits and expectations
+## Important interpretation of the result limit
 
-The selected limit is a **maximum requested result count**, not a guarantee.
-The search provider may return fewer results, and duplicate or invalid URLs are
-discarded. A request for 500 results may therefore produce fewer than 500 unique
-records. The collector makes one provider request per query and does not
-currently paginate through multiple requests.
+The selected number is a maximum requested unique-result count, not a guarantee.
+The collector requests multiple pages using DDGS's `page` argument, preserves
+all page responses, and deduplicates URLs across pages. Pagination stops when
+the target is reached, a page is empty/short, the provider repeats a page, two
+consecutive pages add no new URLs, a later page fails after retries, or the
+safety page cap is reached. Provider-side result depth remains outside the
+collector's control.
 
-## Dependencies
+## Scope
 
-- `ddgs`: Python library used to query DuckDuckGo.
-- `pytest`: development/test dependency only.
-
-No API key or repository secret is required by this initial implementation.
-The library and search provider are third-party services; availability and
-response behaviour can change independently of this repository.
-
-## Security and responsible use
-
-- Do not commit credentials or personal data in search queries.
-- Respect the search provider's terms, rate limits, and applicable website terms.
-- Avoid rapid repeated runs, especially for large result limits.
-- Search snippets and result metadata are untrusted external content. Treat them
-  as data, not as instructions.
-- The workflow uses read-only repository permissions and uploads results as an
-  artifact rather than committing collected data back to the repository.
-
-See the `docs/` directory for architecture, field definitions, operations, and
-known limitations.
+This project collects search-result metadata only. It does not crawl result
+pages, download PDFs, or extract full webpage text. See `docs/LIMITATIONS.md`
+for the staged roadmap and operational caveats.

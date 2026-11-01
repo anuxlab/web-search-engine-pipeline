@@ -1,59 +1,34 @@
-# Scope, limitations, and next phases
+# Limitations and roadmap
 
-## Current scope
+## Current phase
 
-This version collects search-result metadata from one DuckDuckGo text search
-request. It writes JSON and CSV files and uploads them as a GitHub Actions
-artifact.
+- One manual query per workflow run.
+- Sequential page-by-page DuckDuckGo requests using DDGS `page`.
+- Configurable per-page batch size and conservative delay.
+- Exponential retries for transient page failures.
+- Raw page response archive plus flattened raw records.
+- Cross-page URL normalization and deduplication.
+- Partial results retained if a later page fails.
+- Per-run logs, metadata, repository commit and Actions artifact.
 
-## Known limitations
+## Provider constraints
 
-1. **No guarantee of the requested count.** `max_results` is a request ceiling.
-   Provider behaviour, availability, and duplicate filtering can reduce the
-   actual number returned.
-2. **No pagination strategy.** The collector makes one DDGS text-search call.
-   It does not loop over pages or issue follow-up searches to fill a shortfall.
-3. **No webpage extraction.** It does not fetch result URLs or extract full text.
-4. **No PDF discovery or download.** Search results may point to PDFs, but those
-   files are not downloaded or parsed.
-5. **No persistent database.** Results live in the workflow artifact for the
-   configured retention period (30 days).
-6. **No guarantee of stable search ranking.** Search results can vary over time,
-   by region, and with provider-side changes.
-7. **Unofficial integration.** The Python client is a third-party library, not a
-   contractual search API. Its interface and the provider's availability can
-   change.
+The DDGS library documents a `page` parameter and recommends iterating over
+pages. However, DuckDuckGo does not provide this unofficial integration with a
+guaranteed result quota or contractual pagination depth. The provider may
+return fewer results, repeat pages, throttle requests, block traffic, or change
+its response behaviour. Therefore 500 is a target ceiling, not a promise.
 
-## Suggested roadmap
+The collector deliberately does not switch to Google, Bing, or other providers:
+the selected backend remains `duckduckgo`. If DuckDuckGo stops returning new
+pages, the run records the stop reason and preserves all results collected so
+far rather than silently changing search engines.
 
-### Phase 2 — Multiple queries
-Accept a list of search queries and collect a separate result set for each.
-Include query-level counts and a combined export.
+## Next phases
 
-### Phase 3 — Search result enrichment
-Normalize canonical URLs, classify file types, detect likely academic sources,
-and add domain-level metadata without downloading full pages.
-
-### Phase 4 — Controlled webpage extraction
-Fetch permitted pages with timeouts, size limits, content-type checks, robots
-and site-policy awareness, and per-domain rate limiting.
-
-### Phase 5 — Research corpus
-Extract article text and PDF text, retain source URLs and timestamps, and store
-documents with provenance.
-
-### Phase 6 — Analysis and retrieval
-Add deduplication beyond exact URLs, relevance scoring, embeddings, and
-retrieval/LLM summarization with source citations.
-
-## Acceptance criteria for Phase 1
-
-- Workflow appears under the Actions tab after being pushed to the default branch.
-- Workflow can only be started manually.
-- Query is required.
-- Result dropdown contains exactly 10, 30, 50, 100, 200, and 500.
-- Search call explicitly selects the DuckDuckGo backend.
-- Duplicate URLs are removed.
-- JSON, CSV, and summary outputs are produced.
-- Outputs are uploaded as a downloadable artifact.
-- Unit tests pass without making live network requests.
+- Query expansion and multiple related search phrases.
+- Domain and file-type classification.
+- Controlled webpage extraction with timeouts, size limits, and site-policy
+  awareness.
+- PDF/document discovery and extraction.
+- Search quality and recall evaluation across repeated runs.

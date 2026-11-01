@@ -1,62 +1,57 @@
 # Operations guide
 
-## Run a collection
+## Run manually
 
-1. Open the repository's **Actions** tab.
+1. Open **Actions**.
 2. Select **DuckDuckGo Web Search Collector**.
-3. Choose **Run workflow**.
-4. Enter a focused search query.
-5. Select a result limit.
-6. Select a region (`in-en` is the default).
-7. Start the workflow and inspect the job log.
-8. Download the result artifact after the run completes.
+3. Click **Run workflow**.
+4. Enter a query and choose the target count.
+5. Choose region and page size.
+6. Start the workflow.
+7. Inspect page-by-page logs and download the run artifact.
+8. Browse the committed `runs/YYYY/MM/DD/...` directory.
 
-## Choosing a result limit
+## Page size guidance
 
-| Limit | Suggested use |
+| Page size | Guidance |
 |---:|---|
-| 10 | Quick sanity check |
-| 30 | Focused exploratory search |
-| 50 | Normal initial collection |
-| 100 | Broader discovery |
-| 200 | Large discovery batch |
-| 500 | Maximum configured batch; provider may return fewer |
+| 10 | Conservative; more requests |
+| 20 | Conservative |
+| 25 | Recommended default |
+| 30 | Moderate |
+| 50 | Larger requests; may be less gentle |
 
-Start with 10 or 30 while validating a new query. Use 200 or 500 only when
-there is a clear need for a larger batch.
+A smaller page size does not guarantee more total results. It only changes how
+the collector batches its pagination requests.
 
-## Local troubleshooting
+## Pagination and stopping
 
-### `ModuleNotFoundError: No module named 'ddgs'`
+The collector stops when the unique target is reached, an empty/short page is
+returned, the provider repeats a page, two pages in a row add no new valid URLs,
+a later page exhausts retries, or the safety cap is reached. Check `summary.txt`
+for the stop reason and `raw_results.json` for page-level counts.
 
-Install dependencies:
+## Troubleshooting
 
-```bash
-python -m pip install -r requirements.txt
-```
+### Fewer results than requested
 
-### Search returns fewer records than requested
+Check the number of successful pages and `stop_reason` in `raw_results.json`.
+The provider may have exhausted its available results or repeated a page.
+Try a different query formulation or region; do not assume that increasing
+page size alone will overcome provider-side limits.
 
-This can be normal. The provider may return fewer results; duplicate or
-non-HTTP(S) URLs are discarded. The workflow reports requested and actual
-counts separately.
+### Later page fails
 
-### Provider request fails
+Previously collected pages are retained. The run is marked partial rather than
+discarding valid results. Inspect `page_errors` in `raw_results.json` and the
+page-level logs.
 
-Inspect the Actions log. Retry later rather than rapidly rerunning the workflow.
-A transient provider issue, rate limit, network failure, or upstream library
-change may be responsible.
+### Provider throttles requests
 
-### Artifact is missing
+Avoid rapid reruns. Use a smaller page size and allow the configured delay.
+The collector already retries transient failures with exponential backoff.
 
-Check that the job reached the upload step and inspect the artifact step log.
-The workflow uses `if: always()` so output files can be uploaded after a failed
-collector step, but an artifact cannot be created if the runner never reaches
-the upload step or no files exist.
+### Push rejected
 
-## Changing the workflow
-
-Keep `workflow_dispatch` as the only trigger if manual-only execution is
-required. If adding inputs, validate them in Python as well as defining them in
-the workflow UI; workflow inputs are not a substitute for application-level
-validation.
+Check repository workflow permissions and branch protection. The job needs
+`contents: write`.

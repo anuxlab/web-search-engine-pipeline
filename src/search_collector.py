@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Collect and export DuckDuckGo text-search results.
-
-This tool collects search-result metadata only. It does not crawl or download
-the pages referenced by result URLs.
-"""
+"""Paginated DuckDuckGo collector with raw-page preservation and deduplication."""
 
 from __future__ import annotations
 
@@ -11,6 +7,7 @@ import argparse
 import csv
 import json
 import logging
+import math
 import sys
 import time
 from datetime import datetime, timezone
@@ -18,164 +15,277 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from ddgs import DDGS
+try:
+    from ddgs import DDGS
+except ImportError:  # Allows unit tests to run without installing the provider package.
+    DDGS = None  # type: ignore[assignment,misc]
 
 LOGGER = logging.getLogger("ddg_collector")
 ALLOWED_LIMITS = {10, 30, 50, 100, 200, 500}
+ALLOWED_PAGE_SIZES = {10, 20, 25, 30, 50}
 DEFAULT_REGION = "in-en"
 DEFAULT_SAFESEARCH = "moderate"
 SEARCH_ENGINE = "DuckDuckGo"
+DEFAULT_MAX_PAGES = 60
 
 CSV_FIELDS = [
-    "rank",
-    "title",
-    "url",
-    "domain",
-    "snippet",
-    "query",
-    "region",
-    "search_engine",
-    "collected_at",
+    "rank", "title", "url", "domain", "snippet", "query",
+    "region", "search_engine", "collected_at",
 ]
 
 
 def utc_now() -> str:
-    """Return an ISO-8601 UTC timestamp."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def normalize_url(url: str) -> str:
-    """Remove fragments and trailing whitespace without changing query strings."""
+    """Normalize scheme/host and remove fragments; retain path and query."""
     candidate = (url or "").strip()
     if not candidate:
         return ""
-
-    parts = urlsplit(candidate)
-    if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
+    try:
+        parts = urlsplit(candidate)
+        if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
+            return ""
+        return urlunsplit((
+            parts.scheme.lower(),
+            parts.netloc.lower(),
+            parts.path or "",
+            parts.query,
+            "",
+        ))
+    except ValueError:
         return ""
-
-    return urlunsplit(
-        (parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, "")
-    )
 
 
 def extract_domain(url: str) -> str:
-    """Return the hostname for a URL, or an empty string if it is invalid."""
     try:
         return urlsplit(url).hostname or ""
     except ValueError:
         return ""
 
 
-def normalize_result(
-    item: dict[str, Any],
-    rank: int,
+def clean_results(
+    raw_results: list[dict[str, Any]],
     query: str,
     region: str,
     collected_at: str,
-) -> dict[str, Any] | None:
-    """Convert a DDGS result dictionary into the stable output schema."""
-    url = normalize_url(str(item.get("href") or item.get("url") or ""))
-    if not url:
-        return None
-
-    return {
-        "rank": rank,
-        "title": str(item.get("title") or "").strip(),
-        "url": url,
-        "domain": extract_domain(url),
-        "snippet": str(item.get("body") or item.get("snippet") or "").strip(),
-        "query": query,
-        "region": region,
-        "search_engine": SEARCH_ENGINE,
-        "collected_at": collected_at,
-    }
-
-
-def collect_results(
-    query: str,
     limit: int,
-    region: str = DEFAULT_REGION,
-    retries: int = 3,
-    retry_delay: float = 2.0,
 ) -> list[dict[str, Any]]:
-    """Fetch up to ``limit`` unique HTTP(S) results from DuckDuckGo.
-
-    A single DDGS request is made with ``max_results=limit``. The result count
-    may be lower than requested because the provider can return fewer results,
-    throttle requests, or change its response behaviour.
-    """
-    if limit not in ALLOWED_LIMITS:
-        raise ValueError(f"limit must be one of {sorted(ALLOWED_LIMITS)}")
-    query = query.strip()
-    if not query:
-        raise ValueError("query must not be empty")
-    if retries < 1:
-        raise ValueError("retries must be at least 1")
-
-    last_error: Exception | None = None
-    raw_results = None
-
-    for attempt in range(1, retries + 1):
-        try:
-            LOGGER.info(
-                "DuckDuckGo request: query=%r limit=%d region=%s attempt=%d/%d",
-                query, limit, region, attempt, retries
-            )
-            client = DDGS()
-            raw_results = client.text(
-                query,
-                region=region,
-                safesearch=DEFAULT_SAFESEARCH,
-                max_results=limit,
-                backend="duckduckgo",
-            )
-            break
-        except Exception as exc:  # Provider/library exceptions can vary by version.
-            last_error = exc
-            LOGGER.warning("Search attempt %d failed: %s", attempt, exc)
-            if attempt < retries:
-                time.sleep(retry_delay * attempt)
-
-    if raw_results is None:
-        raise RuntimeError(f"DuckDuckGo search failed after {retries} attempts") from last_error
-
-    collected_at = utc_now()
-    results: list[dict[str, Any]] = []
-    seen_urls: set[str] = set()
+    """Normalize and deduplicate a flattened collection of raw result objects."""
+    cleaned: list[dict[str, Any]] = []
+    seen: set[str] = set()
 
     for item in raw_results:
         if not isinstance(item, dict):
             continue
-        normalized = normalize_result(
-            item, len(results) + 1, query, region, collected_at
-        )
-        if normalized is None or normalized["url"] in seen_urls:
+        raw_url = str(item.get("href") or item.get("url") or "")
+        url = normalize_url(raw_url)
+        if not url or url in seen:
             continue
-        seen_urls.add(normalized["url"])
-        results.append(normalized)
-        if len(results) >= limit:
+
+        seen.add(url)
+        cleaned.append({
+            "rank": len(cleaned) + 1,
+            "title": str(item.get("title") or "").strip(),
+            "url": url,
+            "domain": extract_domain(url),
+            "snippet": str(item.get("body") or item.get("snippet") or "").strip(),
+            "query": query,
+            "region": region,
+            "search_engine": SEARCH_ENGINE,
+            "collected_at": collected_at,
+        })
+        if len(cleaned) >= limit:
+            break
+    return cleaned
+
+
+def _page_fingerprint(items: list[dict[str, Any]]) -> tuple[str, ...]:
+    """Stable fingerprint used to detect providers repeating the same page."""
+    values = []
+    for item in items:
+        url = normalize_url(str(item.get("href") or item.get("url") or ""))
+        values.append(url or json.dumps(item, sort_keys=True, default=str))
+    return tuple(values)
+
+
+def fetch_paginated_results(
+    query: str,
+    limit: int,
+    region: str = DEFAULT_REGION,
+    page_size: int = 25,
+    max_pages: int | None = None,
+    retries: int = 3,
+    retry_base_seconds: float = 2.0,
+    page_delay_seconds: float = 1.0,
+) -> dict[str, Any]:
+    """Collect pages until target, exhaustion, repeated pages, or a safety cap.
+
+    `page_size` is the number requested from each page. The DDGS documentation
+    exposes a `page` argument and recommends iterating pages. Actual page depth
+    and result counts remain provider-dependent.
+
+    A later-page failure returns a partial collection with a recorded error;
+    a first-page failure raises because no useful result set was obtained.
+    """
+    if limit not in ALLOWED_LIMITS:
+        raise ValueError(f"limit must be one of {sorted(ALLOWED_LIMITS)}")
+    if page_size not in ALLOWED_PAGE_SIZES:
+        raise ValueError(f"page_size must be one of {sorted(ALLOWED_PAGE_SIZES)}")
+    if not query.strip():
+        raise ValueError("query must not be empty")
+    if retries < 1:
+        raise ValueError("retries must be at least 1")
+    if DDGS is None:
+        raise RuntimeError("Missing dependency: install requirements.txt (ddgs).")
+
+    # Allow extra pages to compensate for duplicates, while keeping a hard cap.
+    calculated_cap = math.ceil(limit / page_size) * 3 + 2
+    page_cap = min(max_pages or calculated_cap, DEFAULT_MAX_PAGES)
+
+    client = DDGS(timeout=20)
+    pages: list[dict[str, Any]] = []
+    flattened_raw: list[dict[str, Any]] = []
+    unique_urls: set[str] = set()
+    previous_fingerprints: set[tuple[str, ...]] = set()
+    duplicate_only_streak = 0
+    consecutive_errors = 0
+    stop_reason = "page_cap_reached"
+    page_errors: list[dict[str, Any]] = []
+
+    for page_number in range(1, page_cap + 1):
+        page_items: list[dict[str, Any]] | None = None
+        last_error: Exception | None = None
+
+        for attempt in range(1, retries + 1):
+            try:
+                LOGGER.info(
+                    "Fetching page %d/%d | batch_size=%d | attempt=%d/%d",
+                    page_number, page_cap, page_size, attempt, retries
+                )
+                response = client.text(
+                    query,
+                    region=region,
+                    safesearch=DEFAULT_SAFESEARCH,
+                    max_results=page_size,
+                    page=page_number,
+                    backend="duckduckgo",
+                )
+                page_items = list(response or [])
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+                LOGGER.warning(
+                    "Page %d attempt %d failed: %s",
+                    page_number, attempt, exc, exc_info=True
+                )
+                if attempt < retries:
+                    wait = retry_base_seconds * (2 ** (attempt - 1))
+                    LOGGER.info("Retrying page %d in %.1f seconds.", page_number, wait)
+                    time.sleep(wait)
+
+        if page_items is None:
+            error_text = repr(last_error)
+            page_errors.append({"page": page_number, "error": error_text})
+            LOGGER.error("Page %d exhausted retries.", page_number)
+            if page_number == 1:
+                raise RuntimeError(
+                    f"DuckDuckGo first page failed after {retries} attempts: {error_text}"
+                ) from last_error
+            stop_reason = "later_page_failed_partial_results"
             break
 
-    return results
+        consecutive_errors = 0
+        fingerprint = _page_fingerprint(page_items)
+        page_new = 0
+
+        for item in page_items:
+            if isinstance(item, dict):
+                flattened_raw.append(item)
+                url = normalize_url(str(item.get("href") or item.get("url") or ""))
+                if url and url not in unique_urls:
+                    unique_urls.add(url)
+                    page_new += 1
+
+        pages.append({
+            "page": page_number,
+            "requested_batch_size": page_size,
+            "returned_count": len(page_items),
+            "new_unique_url_count": page_new,
+            "results": page_items,
+        })
+
+        LOGGER.info(
+            "Page %d complete | raw=%d | new_unique_urls=%d | total_raw=%d | total_unique=%d",
+            page_number, len(page_items), page_new,
+            len(flattened_raw), len(unique_urls)
+        )
+
+        if len(unique_urls) >= limit:
+            stop_reason = "requested_unique_result_limit_reached"
+            break
+        if not page_items:
+            stop_reason = "provider_returned_empty_page"
+            break
+        if fingerprint and fingerprint in previous_fingerprints:
+            stop_reason = "provider_repeated_page"
+            LOGGER.warning("Page %d repeated an earlier page; stopping pagination.", page_number)
+            break
+        if fingerprint:
+            previous_fingerprints.add(fingerprint)
+
+        if page_new == 0:
+            duplicate_only_streak += 1
+        else:
+            duplicate_only_streak = 0
+
+        if duplicate_only_streak >= 2:
+            stop_reason = "two_consecutive_pages_without_new_urls"
+            LOGGER.warning("Two consecutive pages added no new URLs; stopping.")
+            break
+
+        if len(page_items) < page_size:
+            stop_reason = "short_page_provider_exhaustion"
+            LOGGER.info(
+                "Page %d returned fewer than requested (%d < %d); treating as exhaustion.",
+                page_number, len(page_items), page_size
+            )
+            break
+
+        if page_number < page_cap and page_delay_seconds > 0:
+            time.sleep(page_delay_seconds)
+
+    return {
+        "search_engine": SEARCH_ENGINE,
+        "query": query,
+        "region": region,
+        "requested_unique_result_limit": limit,
+        "page_size": page_size,
+        "pages_attempted": len(pages) + len(page_errors),
+        "pages_succeeded": len(pages),
+        "raw_result_count": len(flattened_raw),
+        "raw_unique_url_count": len(unique_urls),
+        "stop_reason": stop_reason,
+        "page_errors": page_errors,
+        "pages": pages,
+        "raw_results": flattened_raw,
+    }
 
 
-def write_json(results: list[dict[str, Any]], output_dir: Path) -> Path:
-    path = output_dir / "search_results.json"
+def write_json(data: Any, path: Path) -> None:
     path.write_text(
-        json.dumps(results, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(data, ensure_ascii=False, indent=2, default=str) + "\n",
         encoding="utf-8",
     )
-    return path
 
 
-def write_csv(results: list[dict[str, Any]], output_dir: Path) -> Path:
-    path = output_dir / "search_results.csv"
+def write_csv(rows: list[dict[str, Any]], path: Path) -> None:
     with path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
         writer.writeheader()
-        writer.writerows(results)
-    return path
+        writer.writerows(rows)
 
 
 def write_summary(
@@ -183,61 +293,65 @@ def write_summary(
     query: str,
     limit: int,
     region: str,
-    results: list[dict[str, Any]],
-    status: str = "SUCCESS",
+    raw_count: int,
+    cleaned_count: int,
+    pages_succeeded: int,
+    stop_reason: str,
+    status: str,
     error: str = "",
-) -> Path:
-    path = output_dir / "summary.txt"
+) -> None:
     lines = [
         "DUCKDUCKGO SEARCH COLLECTION REPORT",
         "=" * 38,
-        f"Status             : {status}",
-        f"Search query       : {query}",
-        f"Search engine      : {SEARCH_ENGINE}",
-        f"Region             : {region}",
-        f"Requested maximum  : {limit}",
-        f"Unique results     : {len(results)}",
-        f"Collected at (UTC) : {utc_now()}",
+        f"Status                  : {status}",
+        f"Search query            : {query}",
+        f"Search engine           : {SEARCH_ENGINE}",
+        f"Region                  : {region}",
+        f"Requested unique limit  : {limit}",
+        f"Raw provider records    : {raw_count}",
+        f"Unique cleaned records  : {cleaned_count}",
+        f"Duplicate/invalid count : {max(raw_count - cleaned_count, 0)}",
+        f"Successful pages        : {pages_succeeded}",
+        f"Pagination stop reason : {stop_reason}",
+        f"Collected at (UTC)      : {utc_now()}",
         "",
-        "Output files:",
-        "- search_results.json",
-        "- search_results.csv",
-        "- summary.txt",
-        "",
-        "Notes:",
-        "- Results are search-result metadata, not downloaded webpage content.",
-        "- The provider may return fewer results than requested.",
+        "Run files:",
+        "- raw_results.json       (page-by-page provider response + flattened raw records)",
+        "- cleaned_results.json  (normalized unique records)",
+        "- cleaned_results.csv   (cleaned spreadsheet export)",
+        "- run.log               (runner command and dependency logs)",
+        "- collector.log         (application logs)",
+        "- metadata.json         (GitHub execution provenance)",
+        "- summary.txt           (run-level counts and status)",
     ]
     if error:
         lines.extend(["", f"Error: {error}"])
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+    (output_dir / "summary.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Collect DuckDuckGo text-search results into JSON and CSV."
+        description="Paginated DuckDuckGo search collector."
     )
-    parser.add_argument("--query", required=True, help="Search query")
+    parser.add_argument("--query", required=True)
+    parser.add_argument("--limit", required=True, type=int, choices=sorted(ALLOWED_LIMITS))
     parser.add_argument(
-        "--limit",
-        required=True,
-        type=int,
-        choices=sorted(ALLOWED_LIMITS),
-        help="Maximum number of unique results",
-    )
-    parser.add_argument(
-        "--region",
-        default=DEFAULT_REGION,
+        "--region", default=DEFAULT_REGION,
         choices=["in-en", "us-en", "uk-en", "wt-wt"],
-        help="DuckDuckGo region (default: in-en)",
     )
     parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path("outputs"),
-        help="Output directory (default: outputs)",
+        "--page-size", type=int, default=25, choices=sorted(ALLOWED_PAGE_SIZES),
+        help="Results requested per page (default: 25).",
     )
+    parser.add_argument(
+        "--max-pages", type=int, default=None,
+        help="Optional hard cap on pages; otherwise calculated from target and page size.",
+    )
+    parser.add_argument(
+        "--page-delay", type=float, default=1.0,
+        help="Delay between successful page requests in seconds.",
+    )
+    parser.add_argument("--output", type=Path, default=Path("outputs"))
     return parser
 
 
@@ -246,28 +360,83 @@ def main(argv: list[str] | None = None) -> int:
     query = args.query.strip()
     args.output.mkdir(parents=True, exist_ok=True)
 
-    if not query:
-        LOGGER.error("Search query cannot be empty.")
-        write_json([], args.output)
-        write_csv([], args.output)
-        write_summary(args.output, query, args.limit, args.region, [], "FAILED",
-                      "Search query cannot be empty.")
-        return 2
+    file_handler = logging.FileHandler(args.output / "collector.log", encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s | %(levelname)s | %(message)s"
+    ))
+    if not LOGGER.handlers:
+        LOGGER.addHandler(file_handler)
+        LOGGER.addHandler(logging.StreamHandler(sys.stdout))
+    LOGGER.setLevel(logging.INFO)
+
+    collected_at = utc_now()
+    raw_bundle: dict[str, Any] = {
+        "search_engine": SEARCH_ENGINE,
+        "query": query,
+        "requested_unique_result_limit": args.limit,
+        "pages": [],
+        "raw_results": [],
+    }
+    cleaned: list[dict[str, Any]] = []
+    status = "FAILED"
+    error_text = ""
 
     try:
-        results = collect_results(query, args.limit, args.region)
-        write_json(results, args.output)
-        write_csv(results, args.output)
-        write_summary(args.output, query, args.limit, args.region, results)
-        LOGGER.info("Completed: requested=%d collected=%d", args.limit, len(results))
-        return 0
-    except Exception as exc:
-        LOGGER.exception("Collection failed")
-        # Keep machine-readable empty outputs and a failure report for artifacts.
-        write_json([], args.output)
-        write_csv([], args.output)
+        LOGGER.info(
+            "Starting paginated search | query=%r | target=%d | page_size=%d",
+            query, args.limit, args.page_size
+        )
+        raw_bundle = fetch_paginated_results(
+            query=query,
+            limit=args.limit,
+            region=args.region,
+            page_size=args.page_size,
+            max_pages=args.max_pages,
+            page_delay_seconds=args.page_delay,
+        )
+        # Persist the complete raw page bundle before cleaning.
+        write_json(raw_bundle, args.output / "raw_results.json")
+        LOGGER.info(
+            "Raw page bundle saved | pages=%d | raw_records=%d",
+            raw_bundle["pages_succeeded"], raw_bundle["raw_result_count"]
+        )
+
+        cleaned = clean_results(
+            raw_bundle["raw_results"], query, args.region, collected_at, args.limit
+        )
+        write_json(cleaned, args.output / "cleaned_results.json")
+        write_csv(cleaned, args.output / "cleaned_results.csv")
+
+        status = (
+            "SUCCESS" if len(cleaned) >= args.limit
+            else "PARTIAL" if cleaned
+            else "NO_RESULTS"
+        )
         write_summary(
-            args.output, query, args.limit, args.region, [], "FAILED", str(exc)
+            args.output, query, args.limit, args.region,
+            raw_bundle["raw_result_count"], len(cleaned),
+            raw_bundle["pages_succeeded"], raw_bundle["stop_reason"], status,
+        )
+        LOGGER.info(
+            "Collection finished | requested=%d | raw=%d | unique=%d | status=%s | stop=%s",
+            args.limit, raw_bundle["raw_result_count"], len(cleaned),
+            status, raw_bundle["stop_reason"]
+        )
+        # Partial results are valid output; do not mark the run as failed merely
+        # because the provider did not expose the full requested count.
+        return 0
+
+    except Exception as exc:
+        error_text = str(exc)
+        LOGGER.exception("Collection failed.")
+        write_json(raw_bundle, args.output / "raw_results.json")
+        write_json(cleaned, args.output / "cleaned_results.json")
+        write_csv(cleaned, args.output / "cleaned_results.csv")
+        write_summary(
+            args.output, query, args.limit, args.region,
+            len(raw_bundle.get("raw_results", [])), len(cleaned),
+            len(raw_bundle.get("pages", [])),
+            "collection_error", "FAILED", error_text,
         )
         return 1
 
