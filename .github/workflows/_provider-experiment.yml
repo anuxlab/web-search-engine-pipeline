@@ -1,0 +1,227 @@
+name: Reusable Search Provider Experiment
+
+on:
+  workflow_call:
+    inputs:
+      provider:
+        required: true
+        type: string
+      search_query:
+        required: true
+        type: string
+      region:
+        required: false
+        type: string
+        default: in-en
+      pages:
+        required: false
+        type: number
+        default: 5
+      page_delay:
+        required: false
+        type: number
+        default: 3
+
+permissions:
+  contents: write
+
+concurrency:
+  group: provider-experiment-${{ inputs.provider }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-experiments.txt
+
+      - name: Prepare run archive
+        id: paths
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          SEARCH_QUERY: ${{ inputs.search_query }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          python - <<'PY'
+          import os, re
+          from datetime import datetime, timezone
+          from pathlib import Path
+          q = os.environ['SEARCH_QUERY'].strip()
+          slug = re.sub(r'[^a-zA-Z0-9]+', '-', q).strip('-').lower()[:42] or 'query'
+          provider = os.environ['PROVIDER']
+          now = datetime.now(timezone.utc)
+          folder = Path('runs') / 'provider-experiments' / now.strftime('%Y/%m/%d') / f"{os.environ['RUN_ID']}-attempt-{os.environ['RUN_ATTEMPT']}-{provider}-{slug}"
+          folder.mkdir(parents=True, exist_ok=True)
+          (folder / 'run.log').write_text(
+              f"PROVIDER EXPERIMENT: {provider}\nQuery: {q}\nRun ID: {os.environ['RUN_ID']}\nAttempt: {os.environ['RUN_ATTEMPT']}\nStarted UTC: {now.isoformat()}\n\n",
+              encoding='utf-8')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+              out.write(f"run_dir={folder.as_posix()}\n")
+          print(f"Run archive: {folder}")
+          PY
+
+      - name: Install experiment dependencies
+        id: install
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          {
+            python --version
+            python -m pip install --upgrade pip
+            python -m pip install -r requirements-experiments.txt
+            python -m pip freeze
+          } 2>&1 | tee -a "${{ steps.paths.outputs.run_dir }}/run.log"
+
+      - name: Configure isolated SearXNG instance
+        if: inputs.provider == 'searxng'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cp config/searxng-settings.yml "$RUNNER_TEMP/searxng-settings.yml"
+          SECRET="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+          sed -i "s/replace-this-at-runtime/${SECRET}/" "$RUNNER_TEMP/searxng-settings.yml"
+          docker pull searxng/searxng:latest
+          docker run -d --name searxng-ddg -p 8888:8080 \
+            -e SEARXNG_BASE_URL=http://127.0.0.1:8888/ \
+            -e SEARXNG_PORT=8080 \
+            -v "$RUNNER_TEMP/searxng-settings.yml:/etc/searxng/settings.yml:ro" \
+            searxng/searxng:latest
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8888/ >/dev/null; then
+              echo "SearXNG is responding."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "SearXNG did not become ready; container logs follow."
+          docker logs searxng-ddg || true
+          exit 1
+
+      - name: Run provider pagination experiment
+        id: experiment
+        if: always()
+        continue-on-error: true
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          SEARCH_QUERY: ${{ inputs.search_query }}
+          REGION: ${{ inputs.region }}
+          PAGES: ${{ inputs.pages }}
+          PAGE_DELAY: ${{ inputs.page_delay }}
+          RUN_DIR: ${{ steps.paths.outputs.run_dir }}
+        run: |
+          set -o pipefail
+          {
+            echo "Provider: $PROVIDER"
+            echo "Query: $SEARCH_QUERY"
+            echo "Region: $REGION"
+            echo "Requested pages: $PAGES"
+            python scripts/provider_experiment.py \
+              --provider "$PROVIDER" \
+              --query "$SEARCH_QUERY" \
+              --region "$REGION" \
+              --pages "$PAGES" \
+              --page-size 10 \
+              --page-delay "$PAGE_DELAY" \
+              --searxng-url http://127.0.0.1:8888 \
+              --output "$RUN_DIR"
+          } 2>&1 | tee -a "$RUN_DIR/run.log"
+
+      - name: Capture SearXNG container diagnostics
+        if: always() && inputs.provider == 'searxng'
+        continue-on-error: true
+        env:
+          RUN_DIR: ${{ steps.paths.outputs.run_dir }}
+        run: |
+          docker logs searxng-ddg > "$RUN_DIR/searxng-container.log" 2>&1 || true
+          docker inspect searxng-ddg > "$RUN_DIR/searxng-container-inspect.json" 2>&1 || true
+          docker rm -f searxng-ddg >/dev/null 2>&1 || true
+
+      - name: Ensure diagnostic files exist
+        if: always()
+        env:
+          RUN_DIR: ${{ steps.paths.outputs.run_dir }}
+          PROVIDER: ${{ inputs.provider }}
+          QUERY: ${{ inputs.search_query }}
+          REGION: ${{ inputs.region }}
+          PAGES: ${{ inputs.pages }}
+          EXPERIMENT_OUTCOME: ${{ steps.experiment.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p = Path(os.environ['RUN_DIR'])
+          p.mkdir(parents=True, exist_ok=True)
+          if not (p / 'raw_results.json').exists():
+              (p / 'raw_results.json').write_text(json.dumps({
+                  'provider': os.environ['PROVIDER'], 'query': os.environ['QUERY'],
+                  'region': os.environ['REGION'], 'requested_pages': int(os.environ['PAGES']),
+                  'pages': [], 'fatal_error': 'experiment did not produce raw_results.json; inspect run.log'
+              }, indent=2) + '\n')
+          if not (p / 'cleaned_results.json').exists():
+              (p / 'cleaned_results.json').write_text('[]\n')
+          if not (p / 'cleaned_results.csv').exists():
+              (p / 'cleaned_results.csv').write_text('rank,title,url,domain,snippet,query,provider,page,region,collected_at\n')
+          if not (p / 'summary.txt').exists():
+              (p / 'summary.txt').write_text(
+                  f"Provider: {os.environ['PROVIDER']}\nQuery: {os.environ['QUERY']}\n"
+                  f"Experiment outcome: {os.environ['EXPERIMENT_OUTCOME']}\n"
+                  f"Dependency installation outcome: {os.environ['INSTALL_OUTCOME']}\n"
+                  "See run.log for details.\n")
+          metadata = {
+              'workflow': 'Reusable Search Provider Experiment', 'provider': os.environ['PROVIDER'],
+              'query': os.environ['QUERY'], 'region': os.environ['REGION'],
+              'requested_pages': int(os.environ['PAGES']),
+              'experiment_step_outcome': os.environ['EXPERIMENT_OUTCOME'],
+              'dependency_install_outcome': os.environ['INSTALL_OUTCOME'],
+              'run_id': os.environ.get('GITHUB_RUN_ID'), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
+              'commit_sha': os.environ.get('GITHUB_SHA')
+          }
+          (p / 'metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')
+          PY
+
+      - name: Commit experiment archive to repository
+        id: writeback
+        if: always()
+        continue-on-error: true
+        env:
+          RUN_DIR: ${{ steps.paths.outputs.run_dir }}
+        run: bash scripts/archive_run.sh
+
+      - name: Upload complete experiment archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-${{ inputs.provider }}-${{ github.run_number }}-attempt-${{ github.run_attempt }}
+          path: ${{ steps.paths.outputs.run_dir }}/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Report experiment status
+        if: always()
+        env:
+          EXPERIMENT_OUTCOME: ${{ steps.experiment.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          WRITEBACK_OUTCOME: ${{ steps.writeback.outcome }}
+        run: |
+          echo "Dependency installation: $INSTALL_OUTCOME"
+          echo "Provider experiment: $EXPERIMENT_OUTCOME"
+          echo "Repository write-back: $WRITEBACK_OUTCOME"
+          if [[ "$INSTALL_OUTCOME" == failure || "$EXPERIMENT_OUTCOME" == failure || "$WRITEBACK_OUTCOME" == failure ]]; then
+            echo "Experiment failed. Diagnostics have been archived where possible."
+            exit 1
+          fi

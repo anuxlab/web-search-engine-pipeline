@@ -1,0 +1,28 @@
+name: Test DuckDuckGo Instant Answer API
+
+on:
+  workflow_dispatch:
+    inputs:
+      search_query:
+        description: Query for the official Instant Answer API
+        required: true
+        type: string
+      region:
+        description: Region metadata (API itself does not provide regional SERP pagination)
+        required: true
+        type: choice
+        options: [in-en, us-en, uk-en, wt-wt]
+        default: in-en
+
+permissions:
+  contents: write
+
+jobs:
+  test-instant-answer:
+    uses: ./.github/workflows/_provider-experiment.yml
+    with:
+      provider: instant-api
+      search_query: ${{ inputs.search_query }}
+      region: ${{ inputs.region }}
+      pages: 1
+      page_delay: 0

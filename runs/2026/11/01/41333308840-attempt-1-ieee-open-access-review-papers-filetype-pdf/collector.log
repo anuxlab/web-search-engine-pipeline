@@ -1,8 +1,0 @@
-2026-11-01 17:48:11,831 | INFO | Starting collection | strategy=paginated | query='ieee open access review papers filetype:pdf' | target=50 | region=in-en
-2026-11-01 17:48:11,885 | INFO | Requesting query='ieee open access review papers filetype:pdf' page=1 attempt=1/3
-2026-11-01 17:48:12,177 | WARNING | Provider request failed | category=http_202_challenge_or_throttle | query='ieee open access review papers filetype:pdf' | page=1 | error=No results found.
-2026-11-01 17:48:12,177 | WARNING | HTTP 202 observed; cooling down 20.0 seconds before one retry.
-2026-11-01 17:48:32,177 | INFO | Requesting query='ieee open access review papers filetype:pdf' page=1 attempt=2/3
-2026-11-01 17:48:32,328 | WARNING | Provider request failed | category=http_202_challenge_or_throttle | query='ieee open access review papers filetype:pdf' | page=1 | error=No results found.
-2026-11-01 17:48:32,328 | WARNING | Pagination halted on failed page 1; retaining partial results.
-2026-11-01 17:48:32,338 | INFO | Collection finished | requested=50 | raw=0 | unique=0 | status=FAILED | stop=provider_challenge_or_request_failure

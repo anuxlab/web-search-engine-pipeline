@@ -1,0 +1,40 @@
+name: Test DDGS DuckDuckGo Pagination
+
+on:
+  workflow_dispatch:
+    inputs:
+      search_query:
+        description: Search query to test
+        required: true
+        type: string
+      region:
+        description: DuckDuckGo region
+        required: true
+        type: choice
+        options: [in-en, us-en, uk-en, wt-wt]
+        default: in-en
+      pages:
+        description: Number of pages to request
+        required: true
+        type: choice
+        options: ['1', '2', '3', '5', '10']
+        default: '5'
+      page_delay:
+        description: Delay between page requests (seconds)
+        required: true
+        type: choice
+        options: ['2', '3', '5', '10']
+        default: '3'
+
+permissions:
+  contents: write
+
+jobs:
+  test-ddgs:
+    uses: ./.github/workflows/_provider-experiment.yml
+    with:
+      provider: ddgs
+      search_query: ${{ inputs.search_query }}
+      region: ${{ inputs.region }}
+      pages: ${{ fromJSON(inputs.pages) }}
+      page_delay: ${{ fromJSON(inputs.page_delay) }}

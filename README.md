@@ -50,6 +50,20 @@ The workflow is intentionally `workflow_dispatch` only. It does not run on `push
 | `additional_queries` | Optional extra queries, one per line | Empty |
 | `max_queries` | Maximum distinct queries including primary | 8 |
 
+
+## Independent provider experiments
+
+In addition to the main collector, four independent, manually triggered workflows are available for diagnosing pagination and API behaviour:
+
+| GitHub Actions workflow | Method | Pagination |
+|---|---|---|
+| **Test DDGS DuckDuckGo Pagination** | `ddgs` with `backend="duckduckgo"` | `page` parameter |
+| **Test DuckDuckGo Lite Pagination** | Direct HTTP and returned Lite continuation form | HTML form continuation |
+| **Test SearXNG DuckDuckGo Pagination** | Ephemeral local SearXNG Docker instance, explicitly selecting `!ddg` | `pageno` parameter |
+| **Test DuckDuckGo Instant Answer API** | Official Instant Answer API | Not supported; control experiment only |
+
+Each workflow is `workflow_dispatch` only. They use the same query/region conventions, write raw diagnostics and normalized JSON/CSV, commit the run archive under `runs/provider-experiments/`, and upload a 90-day artifact. SearXNG is a wrapper around DuckDuckGo, not an independent upstream source. The official Instant Answer API does not return full organic search results. See [docs/PROVIDER_EXPERIMENTS.md](docs/PROVIDER_EXPERIMENTS.md) for setup and interpretation.
+
 ## Output files
 
 Every execution creates a unique folder under `runs/YYYY/MM/DD/<run-id>-attempt-<n>-<query>/`.

@@ -1,0 +1,5 @@
+# DDGS pagination experiment (the backend is explicitly DuckDuckGo)
+ddgs==9.16.1
+# Direct DDG Lite and SearXNG HTTP API clients
+requests==2.32.4
+beautifulsoup4==4.13.4
