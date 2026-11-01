@@ -1,0 +1,20 @@
+{
+  "workflow": "DuckDuckGo Web Search Collector",
+  "run_id": "41334811782",
+  "run_attempt": 1,
+  "run_number": 5,
+  "actor": "anuxlab",
+  "ref": "refs/heads/main",
+  "commit_sha": "50b8326db91ab198276ac111ef35d0ad794dade4",
+  "query": "machine learning research papers filetype:pdf",
+  "requested_limit": 50,
+  "region": "in-en",
+  "strategy": "hybrid",
+  "additional_queries": [
+    "machine learning research papers filetype:pdf"
+  ],
+  "max_queries": 8,
+  "provider_page_size": 10,
+  "collector_step_outcome": "success",
+  "recorded_at_utc": "2026-11-01T18:07:58.193540+00:00"
+}
