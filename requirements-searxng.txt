@@ -1,0 +1,2 @@
+# Production collector runtime: no DDGS or scraping libraries are required.
+requests==2.32.4

@@ -1,54 +1,299 @@
-name: DuckDuckGo Web Search Collector
+name: SearXNG Search Collection Pipeline
 
 on:
   workflow_dispatch:
     inputs:
-      search_query:
-        description: "Primary search phrase"
-        required: true
-        type: string
-      result_limit:
-        description: "Maximum number of unique results to collect"
-        required: true
-        type: choice
-        options: ["10", "30", "50", "100", "200", "500"]
-        default: "50"
-      region:
-        description: "DuckDuckGo search region"
-        required: true
-        type: choice
-        options: ["in-en", "us-en", "uk-en", "wt-wt"]
-        default: "in-en"
-      collection_strategy:
-        description: "Hybrid uses query diversification first; paginated retains the original single-query method"
-        required: true
-        type: choice
-        options: ["hybrid", "paginated"]
-        default: "hybrid"
-      additional_queries:
-        description: "Optional related search queries (one per line); used by hybrid mode"
+      queries:
+        description: "One query per line. Optional per-query result limit: query :: 100."
         required: false
         type: string
-      max_queries:
-        description: "Maximum distinct queries in hybrid mode (including primary query)"
+        default: ""
+      search_query:
+        description: "Legacy single-query input (use only when queries is empty)."
+        required: false
+        type: string
+        default: ""
+      result_limit:
+        description: "Default unique URL target for lines without an explicit per-query limit."
         required: true
         type: choice
-        options: ["4", "6", "8", "10", "12"]
-        default: "8"
+        options: ["10", "25", "50", "100", "200", "500", "1000"]
+        default: "50"
+      region:
+        description: Search region/language mapping
+        required: true
+        type: choice
+        options: [in-en, us-en, uk-en, wt-wt]
+        default: in-en
+      max_pages:
+        description: Hard pagination cap per query and repeat
+        required: true
+        type: choice
+        options: ["5", "10", "20", "30", "50", "75", "100"]
+        default: "20"
+      repeat_count:
+        description: Repeat each query independently to measure stability
+        required: true
+        type: choice
+        options: ["1", "2", "3", "5"]
+        default: "1"
+      max_parallel_queries:
+        description: Maximum concurrent query/repeat jobs
+        required: true
+        type: choice
+        options: ["1", "2", "3", "4"]
+        default: "3"
+      page_delay:
+        description: Delay between pages per query (seconds)
+        required: true
+        type: choice
+        options: ["1", "2", "3", "5", "8"]
+        default: "2"
 
 permissions:
   contents: write
 
-# Serialize manual runs on the same branch to reduce write-back races.
+# Serialize batch write-back on a branch. Matrix workers only upload artifacts;
+# a single aggregation job performs the repository commit.
 concurrency:
-  group: ddg-search-${{ github.workflow }}-${{ github.ref }}
+  group: searxng-search-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  collect:
-    name: Collect, archive, and commit results
+  prepare:
+    name: Validate query batch and build matrix
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+      manifest: ${{ steps.prepare.outputs.manifest }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate inputs and prepare matrix
+        id: prepare
+        env:
+          SEARCH_QUERIES: ${{ inputs.queries }}
+          SEARCH_QUERY: ${{ inputs.search_query }}
+          DEFAULT_RESULT_LIMIT: ${{ inputs.result_limit }}
+          SEARCH_REGION: ${{ inputs.region }}
+          MAX_PAGES: ${{ inputs.max_pages }}
+          REPEAT_COUNT: ${{ inputs.repeat_count }}
+          MAX_PARALLEL: ${{ inputs.max_parallel_queries }}
+          PAGE_DELAY: ${{ inputs.page_delay }}
+          MAX_QUERIES: "20"
+        run: python scripts/prepare_batch.py
+
+  collect:
+    name: Q${{ matrix.query_index }} R${{ matrix.repeat_index }} — ${{ matrix.slug }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel_queries) }}
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-searxng.txt
+      - name: Create task archive
+        id: paths
+        env:
+          QUERY_INDEX: ${{ matrix.query_index }}
+          QUERY: ${{ matrix.query }}
+          REPEAT_INDEX: ${{ matrix.repeat_index }}
+          SLUG: ${{ matrix.slug }}
+          RESULT_LIMIT: ${{ matrix.result_limit }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          COMMIT_SHA: ${{ github.sha }}
+          REGION: ${{ inputs.region }}
+          MAX_PAGES: ${{ inputs.max_pages }}
+          PAGE_DELAY: ${{ inputs.page_delay }}
+        run: |
+          set -euo pipefail
+          RUN_DIR="task-output/query-${QUERY_INDEX}-repeat-${REPEAT_INDEX}"
+          mkdir -p "$RUN_DIR"
+          export RUN_DIR
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p = Path(os.environ['RUN_DIR'])
+          task = {
+              'query_index': int(os.environ['QUERY_INDEX']), 'query': os.environ['QUERY'],
+              'repeat_index': int(os.environ['REPEAT_INDEX']), 'slug': os.environ['SLUG'],
+              'result_limit': int(os.environ['RESULT_LIMIT']),
+          }
+          (p / 'task.json').write_text(json.dumps(task, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+          from datetime import datetime, timezone
+          (p / 'run.log').write_text('Task started UTC: ' + datetime.now(timezone.utc).isoformat() + '\n', encoding='utf-8')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
+              f.write(f"run_dir={p.as_posix()}\n")
+          PY
+      - name: Install production dependencies
+        id: install
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-searxng.txt 2>&1 | tee -a "${{ steps.paths.outputs.run_dir }}/run.log"
+      - name: Start isolated SearXNG instance (DuckDuckGo only)
+        id: searxng
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        env:
+          CONTAINER_NAME: searxng-q${{ matrix.query_index }}-r${{ matrix.repeat_index }}
+        run: |
+          set -euo pipefail
+          SETTINGS="$RUNNER_TEMP/searxng-settings.yml"
+          cp config/searxng-settings.yml "$SETTINGS"
+          SECRET="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+          sed -i "s/replace-this-at-runtime/${SECRET}/" "$SETTINGS"
+          IMAGE_TAG="$(tr -d '\r\n' < config/searxng-image.txt)"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          if docker pull "docker.io/searxng/searxng:${IMAGE_TAG}"; then
+            IMAGE="docker.io/searxng/searxng:${IMAGE_TAG}"
+          else
+            docker pull "ghcr.io/searxng/searxng:${IMAGE_TAG}"
+            IMAGE="ghcr.io/searxng/searxng:${IMAGE_TAG}"
+          fi
+          docker run -d --name "$CONTAINER_NAME" -p 8888:8080 \
+            -e SEARXNG_BASE_URL=http://127.0.0.1:8888/ \
+            -e SEARXNG_PORT=8080 \
+            -v "$SETTINGS:/etc/searxng/settings.yml:ro" \
+            "$IMAGE"
+          READY=0
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8888/ >/dev/null; then READY=1; break; fi
+            sleep 2
+          done
+          if [[ "$READY" != "1" ]]; then
+            docker logs "$CONTAINER_NAME" || true
+            echo "SearXNG did not become ready within 120 seconds."
+            exit 1
+          fi
+          echo "SearXNG ready using pinned image ${IMAGE_TAG}."
+      - name: Run SearXNG DuckDuckGo collector
+        id: collect
+        if: always() && steps.install.outcome == 'success' && steps.searxng.outcome == 'success'
+        continue-on-error: true
+        env:
+          QUERY: ${{ matrix.query }}
+          RESULT_LIMIT: ${{ matrix.result_limit }}
+          REGION: ${{ inputs.region }}
+          MAX_PAGES: ${{ inputs.max_pages }}
+          PAGE_DELAY: ${{ inputs.page_delay }}
+          RUN_DIR: ${{ steps.paths.outputs.run_dir }}
+        run: |
+          set -o pipefail
+          python src/searxng_collector.py \
+            --base-url http://127.0.0.1:8888 \
+            --query "$QUERY" --limit "$RESULT_LIMIT" --region "$REGION" \
+            --max-pages "$MAX_PAGES" --page-delay "$PAGE_DELAY" \
+            --output "$RUN_DIR" 2>&1 | tee -a "$RUN_DIR/run.log"
+      - name: Capture SearXNG container diagnostics and cleanup
+        if: always()
+        env:
+          CONTAINER_NAME: searxng-q${{ matrix.query_index }}-r${{ matrix.repeat_index }}
+          RUN_DIR: ${{ steps.paths.outputs.run_dir }}
+        run: |
+          docker logs "$CONTAINER_NAME" > "$RUN_DIR/searxng-container.log" 2>&1 || true
+          docker inspect "$CONTAINER_NAME" > "$RUN_DIR/searxng-container-inspect.json" 2>&1 || true
+          docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+      - name: Ensure diagnostics exist
+        if: always()
+        env:
+          RUN_DIR: ${{ steps.paths.outputs.run_dir }}
+          QUERY: ${{ matrix.query }}
+          LIMIT: ${{ matrix.result_limit }}
+          REGION: ${{ inputs.region }}
+          MAX_PAGES: ${{ inputs.max_pages }}
+          PAGE_DELAY: ${{ inputs.page_delay }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_NUMBER: ${{ github.run_number }}
+          ACTOR: ${{ github.actor }}
+          REF: ${{ github.ref }}
+          COMMIT_SHA: ${{ github.sha }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          SEARXNG_OUTCOME: ${{ steps.searxng.outcome }}
+          COLLECT_OUTCOME: ${{ steps.collect.outcome }}
+        run: |
+          python - <<'PY'
+          import csv, json, os
+          from pathlib import Path
+          p = Path(os.environ['RUN_DIR'])
+          p.mkdir(parents=True, exist_ok=True)
+          if not (p / 'raw_results.json').exists():
+              raw = {
+                  'provider': 'searxng', 'search_engine': 'DuckDuckGo', 'query': os.environ['QUERY'],
+                  'region': os.environ['REGION'], 'requested_unique_result_limit': int(os.environ['LIMIT']),
+                  'status': 'FAILED', 'target_reached': False, 'stop_reason': 'workflow_stage_failed',
+                  'pages_attempted': 0, 'pages_succeeded': 0, 'pages_failed': 1,
+                  'raw_result_count': 0, 'duckduckgo_result_count': 0, 'unique_result_count': 0,
+                  'page_errors': [{'category': 'workflow_stage_failed', 'install': os.environ['INSTALL_OUTCOME'],
+                                  'searxng': os.environ['SEARXNG_OUTCOME'], 'collector': os.environ['COLLECT_OUTCOME']}],
+                  'pages': [], 'raw_results': [],
+              }
+              (p / 'raw_results.json').write_text(json.dumps(raw, indent=2) + '\n', encoding='utf-8')
+          if not (p / 'cleaned_results.json').exists(): (p / 'cleaned_results.json').write_text('[]\n', encoding='utf-8')
+          if not (p / 'cleaned_results.csv').exists():
+              with (p / 'cleaned_results.csv').open('w', newline='', encoding='utf-8') as f:
+                  csv.writer(f).writerow(['rank','title','url','domain','snippet','query','source_query','source_page','source_engine','provider','region','collected_at'])
+          (p / 'workflow_stage_status.json').write_text(json.dumps({
+              'dependency_install': os.environ['INSTALL_OUTCOME'], 'searxng_startup': os.environ['SEARXNG_OUTCOME'],
+              'collector': os.environ['COLLECT_OUTCOME']}, indent=2) + '\n', encoding='utf-8')
+          metadata = {
+              'workflow': 'SearXNG Search Collection Pipeline', 'provider': 'SearXNG',
+              'upstream_engine': 'DuckDuckGo', 'run_id': os.environ['RUN_ID'],
+              'run_attempt': int(os.environ['RUN_ATTEMPT']), 'run_number': int(os.environ['RUN_NUMBER']),
+              'actor': os.environ['ACTOR'], 'ref': os.environ['REF'], 'commit_sha': os.environ['COMMIT_SHA'],
+              'query': os.environ['QUERY'], 'requested_result_limit': int(os.environ['LIMIT']),
+              'region': os.environ['REGION'], 'max_pages': int(os.environ['MAX_PAGES']),
+              'page_delay': float(os.environ['PAGE_DELAY']),
+              'searxng_image_tag': Path('config/searxng-image.txt').read_text(encoding='utf-8').strip(),
+              'install_outcome': os.environ['INSTALL_OUTCOME'], 'searxng_outcome': os.environ['SEARXNG_OUTCOME'],
+              'collector_outcome': os.environ['COLLECT_OUTCOME']
+          }
+          (p / 'metadata.json').write_text(json.dumps(metadata, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+          if not (p / 'collector.log').exists(): (p / 'collector.log').write_text('Collector did not start.\n', encoding='utf-8')
+          if not (p / 'summary.txt').exists(): (p / 'summary.txt').write_text('Task failed before collector output was produced.\n', encoding='utf-8')
+          PY
+      - name: Upload query/repeat artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: searxng-q${{ matrix.query_index }}-r${{ matrix.repeat_index }}-${{ matrix.slug }}
+          path: ${{ steps.paths.outputs.run_dir }}/
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Report task outcome
+        if: always()
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          SEARXNG_OUTCOME: ${{ steps.searxng.outcome }}
+          COLLECT_OUTCOME: ${{ steps.collect.outcome }}
+        run: |
+          echo "Install: $INSTALL_OUTCOME | SearXNG: $SEARXNG_OUTCOME | Collector: $COLLECT_OUTCOME"
+          if [[ "$INSTALL_OUTCOME" != success || "$SEARXNG_OUTCOME" != success || "$COLLECT_OUTCOME" != success ]]; then exit 1; fi
+
+  aggregate:
+    name: Aggregate, archive, and write back batch
+    needs: [prepare, collect]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -56,171 +301,73 @@ jobs:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
           persist-credentials: true
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
-          cache-dependency-path: requirements.txt
-
-      - name: Create run archive and initialize logs
+      - name: Prepare artifact download directory
+        run: mkdir -p downloaded-artifacts
+      - name: Download all query/repeat artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: searxng-q*
+          path: downloaded-artifacts
+          merge-multiple: false
+      - name: Create batch archive path
         id: paths
         env:
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
-          SEARCH_QUERY: ${{ inputs.search_query }}
         run: |
           python - <<'PY'
-          import os, re
+          import os
           from datetime import datetime, timezone
           from pathlib import Path
-          query = os.environ["SEARCH_QUERY"].strip()
-          slug = re.sub(r"[^a-zA-Z0-9]+", "-", query).strip("-").lower()[:48] or "query"
           now = datetime.now(timezone.utc)
-          run_dir = Path("runs") / now.strftime("%Y/%m/%d") / f"{os.environ['RUN_ID']}-attempt-{os.environ['RUN_ATTEMPT']}-{slug}"
-          run_dir.mkdir(parents=True, exist_ok=True)
-          (run_dir / "run.log").write_text(
-              "DUCKDUCKGO WORKFLOW RUN LOG\n"
-              f"Run ID: {os.environ['RUN_ID']}\n"
-              f"Attempt: {os.environ['RUN_ATTEMPT']}\n"
-              f"Query: {query}\nStarted (UTC): {now.isoformat()}\n\n", encoding="utf-8")
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-              out.write(f"run_dir={run_dir.as_posix()}\n")
-          print(f"Run archive: {run_dir}")
+          p = Path('runs/searxng-batches') / now.strftime('%Y/%m/%d') / f"{os.environ['RUN_ID']}-attempt-{os.environ['RUN_ATTEMPT']}"
+          p.mkdir(parents=True, exist_ok=True)
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f: f.write(f"run_dir={p.as_posix()}\n")
+          print(f"Batch archive: {p}")
           PY
-
-      - name: Install dependencies and run collector
-        id: collect
+      - name: Aggregate query and repeat results
+        id: aggregate
         continue-on-error: true
         env:
-          SEARCH_QUERY: ${{ inputs.search_query }}
-          RESULT_LIMIT: ${{ inputs.result_limit }}
-          SEARCH_REGION: ${{ inputs.region }}
-          COLLECTION_STRATEGY: ${{ inputs.collection_strategy }}
-          ADDITIONAL_QUERIES: ${{ inputs.additional_queries }}
-          MAX_QUERIES: ${{ inputs.max_queries }}
+          DOWNLOAD_DIR: downloaded-artifacts
           RUN_DIR: ${{ steps.paths.outputs.run_dir }}
-        run: |
-          set -o pipefail
-          {
-            echo "===== RUN ENVIRONMENT ====="
-            python --version
-            echo "Runner OS: $RUNNER_OS"
-            echo "Repository: $GITHUB_REPOSITORY"
-            echo "Branch: $GITHUB_REF_NAME"
-            echo "Commit: $GITHUB_SHA"
-            echo "===== INSTALL DEPENDENCIES ====="
-            python -m pip install --upgrade pip
-            python -m pip install -r requirements.txt
-            echo "===== SEARCH COLLECTION ====="
-            python src/search_collector.py \
-              --query "$SEARCH_QUERY" \
-              --limit "$RESULT_LIMIT" \
-              --region "$SEARCH_REGION" \
-              --strategy "$COLLECTION_STRATEGY" \
-              --additional-queries "$ADDITIONAL_QUERIES" \
-              --max-queries "$MAX_QUERIES" \
-              --page-delay 3.0 \
-              --blocked-cooldown 20 \
-              --output "$RUN_DIR"
-          } 2>&1 | tee -a "$RUN_DIR/run.log"
-
-      - name: Ensure archive files exist
-        if: always()
-        env:
-          RUN_DIR: ${{ steps.paths.outputs.run_dir }}
-          QUERY: ${{ inputs.search_query }}
-          LIMIT: ${{ inputs.result_limit }}
-          REGION: ${{ inputs.region }}
-          STRATEGY: ${{ inputs.collection_strategy }}
-          COLLECT_OUTCOME: ${{ steps.collect.outcome }}
-        run: |
-          python - <<'PY' 2>&1 | tee -a "$RUN_DIR/run.log"
-          import csv, json, os
-          from pathlib import Path
-          run_dir = Path(os.environ["RUN_DIR"])
-          run_dir.mkdir(parents=True, exist_ok=True)
-          defaults = {
-              "raw_results.json": {"search_engine":"DuckDuckGo", "strategy":os.environ["STRATEGY"], "pages":[], "raw_results":[], "raw_result_count":0, "pages_succeeded":0, "stop_reason":"collector_did_not_start_or_failed_before_search"},
-              "cleaned_results.json": [],
-          }
-          for name, value in defaults.items():
-              path = run_dir / name
-              if not path.exists(): path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
-          csv_path = run_dir / "cleaned_results.csv"
-          if not csv_path.exists():
-              fields = ["rank","title","url","domain","snippet","query","source_query","region","search_engine","collected_at"]
-              with csv_path.open("w", newline="", encoding="utf-8-sig") as handle: csv.DictWriter(handle, fieldnames=fields, lineterminator="\n").writeheader()
-          summary = run_dir / "summary.txt"
-          if not summary.exists():
-              summary.write_text("DUCKDUCKGO SEARCH COLLECTION REPORT\n" f"Status: {os.environ.get('COLLECT_OUTCOME','unknown')}\n" f"Query: {os.environ['QUERY']}\n" f"Requested maximum: {os.environ['LIMIT']}\n" f"Region: {os.environ['REGION']}\n" f"Strategy: {os.environ['STRATEGY']}\nCollector summary unavailable; inspect run.log.\n", encoding="utf-8")
-          PY
-
-      - name: Write run metadata
-        if: always()
-        env:
-          RUN_DIR: ${{ steps.paths.outputs.run_dir }}
+          MANIFEST_JSON: ${{ needs.prepare.outputs.manifest }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
-          RUN_NUMBER: ${{ github.run_number }}
-          ACTOR: ${{ github.actor }}
-          REF: ${{ github.ref }}
-          SHA: ${{ github.sha }}
-          QUERY: ${{ inputs.search_query }}
-          LIMIT: ${{ inputs.result_limit }}
-          REGION: ${{ inputs.region }}
-          STRATEGY: ${{ inputs.collection_strategy }}
-          ADDITIONAL_QUERIES: ${{ inputs.additional_queries }}
-          MAX_QUERIES: ${{ inputs.max_queries }}
-          COLLECT_OUTCOME: ${{ steps.collect.outcome }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
-          python - <<'PY' 2>&1 | tee -a "$RUN_DIR/run.log"
-          import json, os
-          from datetime import datetime, timezone
-          from pathlib import Path
-          run_dir = Path(os.environ["RUN_DIR"])
-          metadata = {
-              "workflow": "DuckDuckGo Web Search Collector",
-              "run_id": os.environ["RUN_ID"], "run_attempt": int(os.environ["RUN_ATTEMPT"]),
-              "run_number": int(os.environ["RUN_NUMBER"]), "actor": os.environ["ACTOR"],
-              "ref": os.environ["REF"], "commit_sha": os.environ["SHA"],
-              "query": os.environ["QUERY"], "requested_limit": int(os.environ["LIMIT"]),
-              "region": os.environ["REGION"], "strategy": os.environ["STRATEGY"],
-              "additional_queries": [x.strip() for x in os.environ.get("ADDITIONAL_QUERIES", "").splitlines() if x.strip()],
-              "max_queries": int(os.environ["MAX_QUERIES"]), "provider_page_size": 10,
-              "collector_step_outcome": os.environ["COLLECT_OUTCOME"],
-              "recorded_at_utc": datetime.now(timezone.utc).isoformat(),
-          }
-          (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-          PY
-
-      - name: Commit run outputs to repository
+          python scripts/aggregate_batch.py \
+            --download-dir "$DOWNLOAD_DIR" --output-dir "$RUN_DIR" \
+            --manifest-json "$MANIFEST_JSON" --run-id "$RUN_ID" \
+            --attempt "$RUN_ATTEMPT" --commit-sha "$COMMIT_SHA"
+      - name: Commit complete batch archive
         id: writeback
         if: always()
         continue-on-error: true
         env:
           RUN_DIR: ${{ steps.paths.outputs.run_dir }}
         run: bash scripts/archive_run.sh
-
-      - name: Upload complete run archive
+      - name: Upload complete batch archive
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: duckduckgo-run-${{ github.run_number }}-attempt-${{ github.run_attempt }}
+          name: searxng-batch-${{ github.run_number }}-attempt-${{ github.run_attempt }}
           path: ${{ steps.paths.outputs.run_dir }}/
           if-no-files-found: warn
           retention-days: 90
-
-      - name: Report overall workflow status
+      - name: Report batch status
         if: always()
         env:
-          COLLECT_OUTCOME: ${{ steps.collect.outcome }}
+          AGGREGATE_OUTCOME: ${{ steps.aggregate.outcome }}
           WRITEBACK_OUTCOME: ${{ steps.writeback.outcome }}
+          COLLECT_RESULT: ${{ needs.collect.result }}
+          RUN_DIR: ${{ steps.paths.outputs.run_dir }}
         run: |
-          echo "Collector outcome: $COLLECT_OUTCOME"
-          echo "Repository write-back outcome: $WRITEBACK_OUTCOME"
-          if [[ "$COLLECT_OUTCOME" == "failure" || "$WRITEBACK_OUTCOME" == "failure" ]]; then
-            echo "Collection or repository write-back failed. Inspect the run artifact and step logs."
-            exit 1
-          fi
+          BATCH_STATUS="$(python -c 'import json,os; p=os.path.join(os.environ["RUN_DIR"],"batch_summary.json"); print(json.load(open(p)).get("batch_status","UNKNOWN"))' 2>/dev/null || echo UNKNOWN)"
+          echo "Batch: $BATCH_STATUS | Aggregate: $AGGREGATE_OUTCOME | Matrix collection: $COLLECT_RESULT | Write-back: $WRITEBACK_OUTCOME"
+          if [[ "$BATCH_STATUS" != SUCCESS || "$AGGREGATE_OUTCOME" == failure || "$WRITEBACK_OUTCOME" == failure || "$COLLECT_RESULT" == failure ]]; then exit 1; fi

@@ -1,4 +1,9 @@
-use_default_settings: true
+# Local, short-lived SearXNG instance used by the production collector.
+# Keep only DuckDuckGo enabled: this is intentionally not a metasearch blend.
+use_default_settings:
+  engines:
+    keep_only:
+      - duckduckgo
 server:
   secret_key: "replace-this-at-runtime"
   limiter: false

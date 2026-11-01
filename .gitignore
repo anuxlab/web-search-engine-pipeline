@@ -6,3 +6,5 @@ venv/
 .env
 outputs/*
 !outputs/.gitkeep
+task-output/
+downloaded-artifacts/

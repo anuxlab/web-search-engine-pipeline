@@ -6,7 +6,7 @@ set -Eeuo pipefail
 : "${GITHUB_REF_NAME:?GITHUB_REF_NAME is required}"
 : "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
 BRANCH="$GITHUB_REF_NAME"
-LOG_TMP="${RUNNER_TEMP:-/tmp}/ddg-writeback-${GITHUB_RUN_ID}.log"
+LOG_TMP="${RUNNER_TEMP:-/tmp}/search-writeback-${GITHUB_RUN_ID}.log"
 mkdir -p "$(dirname "$RUN_DIR")"
 : > "$LOG_TMP"
 exec > >(tee -a "$LOG_TMP") 2>&1
@@ -52,7 +52,7 @@ git add "$RUN_DIR"
 if git diff --cached --quiet; then
   echo "No run files changed; no archive commit required."
 else
-  git commit -m "chore(search): archive DuckDuckGo run ${GITHUB_RUN_ID}"
+  git commit -m "chore(search): archive search batch ${GITHUB_RUN_ID}"
   push_with_retry
   echo "Primary run archive push succeeded."
 fi

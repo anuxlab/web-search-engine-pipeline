@@ -1,4 +1,6 @@
-# Independent Search Provider Experiments
+# Historical Independent Search Provider Experiments
+
+These workflows are retained for reproducibility and comparison. They are not invoked by the production collector, which now uses SearXNG only.
 
 Four separate, manually triggered GitHub Actions workflows are provided. They use the same query, region, page-count inputs (where applicable), output schema, artifact retention, and repository archive process.
 
@@ -24,7 +26,7 @@ All workflows are `workflow_dispatch` only. There are no `push`, `pull_request`,
 
 ## SearXNG container
 
-The SearXNG workflow pulls the official `searxng/searxng` container, starts an ephemeral instance on the GitHub runner, enables JSON output, and queries only the `duckduckgo` engine. Container logs and inspection output are archived. No persistent public SearXNG instance or external API key is required.
+The original SearXNG experiment workflow pulls the official `searxng/searxng:latest` container, starts an ephemeral instance on the GitHub runner, enables JSON output, and queries only the `duckduckgo` engine. The production workflow instead uses the pinned image tag documented in the main README. Container logs and inspection output are archived. No persistent public SearXNG instance or external API key is required.
 
 ## Manual test procedure
 
