@@ -1,0 +1,17 @@
+SEARCH PROVIDER EXPERIMENT
+==================================
+Provider: instant-api
+Query: machine learning research papers filetype:pdf
+Region: in-en
+Requested pages: 1
+Pages attempted: 1
+Pages with HTTP 200: 0
+Unique results: 0
+Pagination: not applicable
+Fatal error: None
+
+Page diagnostics:
+  Page 1: HTTP 202 | returned=0 | new_unique=0 | error=None
+
+Interpretation:
+This API does not provide the full organic web search results or SERP pagination.
