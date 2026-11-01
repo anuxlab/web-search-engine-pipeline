@@ -1,0 +1,15 @@
+{
+  "workflow": "DuckDuckGo Web Search Collector",
+  "run_id": "41330758940",
+  "run_attempt": 1,
+  "run_number": 2,
+  "actor": "anuxlab",
+  "ref": "refs/heads/main",
+  "commit_sha": "ee7f31bf5f6bf2aae188350033835c1c7b85c25d",
+  "query": "iphone",
+  "requested_limit": 100,
+  "region": "in-en",
+  "page_size": 50,
+  "collector_step_outcome": "success",
+  "recorded_at_utc": "2026-11-01T17:18:10.644749+00:00"
+}
