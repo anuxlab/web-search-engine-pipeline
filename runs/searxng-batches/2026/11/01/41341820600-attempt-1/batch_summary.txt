@@ -1,0 +1,14 @@
+SEARXNG SEARCH BATCH SUMMARY
+==============================
+Batch status: PARTIAL
+Queries: 1
+Repeats per query: 1
+Tasks/artifacts: 1/1
+Aggregate result rows: 216
+
+Per-query repeatability:
+1. machine learning research papers filetype:pdf
+   Target: 500 | repeats: 1/1
+   Unique counts: [216] | mean: 216.0
+   Exact set repeatability: None | mean pairwise Jaccard: None
+   All repeats reached target: False

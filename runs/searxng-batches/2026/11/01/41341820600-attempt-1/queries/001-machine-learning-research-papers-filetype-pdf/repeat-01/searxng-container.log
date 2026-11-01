@@ -1,0 +1,15 @@
+SearXNG 2026.11.1-9ded3bec1
+Updating certificates in /etc/ssl/certs...
+0 added, 0 removed; done.
+Running hooks in /etc/ca-certificates/update.d...
+done.
+[INFO] Starting granian (main PID: 1)
+[INFO] Listening at: http://[::]:8080
+[INFO] Spawning worker-1 with PID: 619
+2026-11-01 19:27:51,222 WARNING:searx.botdetection.config: missing config file: /etc/searxng/limiter.toml
+[INFO] Started worker-1
+2026-11-01 19:27:52,001 ERROR:searx.botdetection: X-Forwarded-For nor X-Real-IP header is set!
+2026-11-01 19:27:56,313 ERROR:searx.result_types: filter_urls (field 'url'): ignore AttributeError("'MainResult' object has no attribute 'doi'") from callback /usr/local/searxng/searx/result_types/_base.py:341
+2026-11-01 19:28:19,406 ERROR:searx.result_types: filter_urls (field 'url'): ignore AttributeError("'MainResult' object has no attribute 'doi'") from callback /usr/local/searxng/searx/result_types/_base.py:341
+2026-11-01 19:28:32,575 ERROR:searx.result_types: filter_urls (field 'url'): ignore AttributeError("'MainResult' object has no attribute 'doi'") from callback /usr/local/searxng/searx/result_types/_base.py:341
+2026-11-01 19:28:42,291 WARNING:searx.engines.duckduckgo: ErrorContext('searx/engines/duckduckgo.py', 477, 'raise SearxEngineCaptchaException(suspended_time=0, message=f"CAPTCHA ({params[\'data\'].get(\'kl\')})")', 'searx.exceptions.SearxEngineCaptchaException', None, ('CAPTCHA (in-en) (suspended_time=0)',)) False

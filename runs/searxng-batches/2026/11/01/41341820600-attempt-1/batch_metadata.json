@@ -1,0 +1,28 @@
+{
+  "workflow": "SearXNG Search Collection Pipeline",
+  "provider": "SearXNG",
+  "upstream_engine": "DuckDuckGo",
+  "run_id": "41341820600",
+  "run_attempt": "1",
+  "commit_sha": "978badc6a0110202caaf078779bb898320eda662",
+  "recorded_at_utc": "2026-11-01T19:28:52.466260+00:00",
+  "manifest": {
+    "queries": [
+      {
+        "query_index": 1,
+        "query": "machine learning research papers filetype:pdf",
+        "result_limit": 500,
+        "slug": "machine-learning-research-papers-filetype-pdf"
+      }
+    ],
+    "repeat_count": 1,
+    "task_count": 1,
+    "region": "in-en",
+    "max_pages": 50,
+    "page_delay": 3.0,
+    "max_parallel": 4
+  },
+  "artifact_count": 1,
+  "expected_task_count": 1,
+  "batch_status": "PARTIAL"
+}

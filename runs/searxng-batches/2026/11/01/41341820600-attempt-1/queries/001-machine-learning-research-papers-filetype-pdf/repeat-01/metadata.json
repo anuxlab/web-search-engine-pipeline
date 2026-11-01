@@ -1,0 +1,20 @@
+{
+  "workflow": "SearXNG Search Collection Pipeline",
+  "provider": "SearXNG",
+  "upstream_engine": "DuckDuckGo",
+  "run_id": "41341820600",
+  "run_attempt": 1,
+  "run_number": 6,
+  "actor": "anuxlab",
+  "ref": "refs/heads/main",
+  "commit_sha": "978badc6a0110202caaf078779bb898320eda662",
+  "query": "machine learning research papers filetype:pdf",
+  "requested_result_limit": 500,
+  "region": "in-en",
+  "max_pages": 50,
+  "page_delay": 3.0,
+  "searxng_image_tag": "2026.11.1-9ded3bec1",
+  "install_outcome": "success",
+  "searxng_outcome": "success",
+  "collector_outcome": "success"
+}

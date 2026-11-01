@@ -1,0 +1,31 @@
+SEARXNG SEARCH COLLECTION REPORT
+====================================
+Status: PARTIAL
+Query: machine learning research papers filetype:pdf
+Region: in-en
+Engine: duckduckgo
+Requested unique results: 500
+Unique results collected: 216
+Pages attempted / succeeded / failed: 16 / 16 / 0
+Retry attempts: 16
+Total request time (seconds): 5.092
+Target reached: False
+Stop reason: duckduckgo_engine_unresponsive
+
+Page diagnostics:
+Page 1: HTTP 200 | raw=10 | DuckDuckGo=10 | new_unique=10 | attempts=1 | elapsed=0.804s
+Page 2: HTTP 200 | raw=15 | DuckDuckGo=15 | new_unique=14 | attempts=1 | elapsed=0.343s
+Page 3: HTTP 200 | raw=15 | DuckDuckGo=15 | new_unique=13 | attempts=1 | elapsed=0.289s
+Page 4: HTTP 200 | raw=15 | DuckDuckGo=15 | new_unique=15 | attempts=1 | elapsed=0.291s
+Page 5: HTTP 200 | raw=15 | DuckDuckGo=15 | new_unique=15 | attempts=1 | elapsed=0.299s
+Page 6: HTTP 200 | raw=14 | DuckDuckGo=14 | new_unique=14 | attempts=1 | elapsed=0.296s
+Page 7: HTTP 200 | raw=15 | DuckDuckGo=15 | new_unique=15 | attempts=1 | elapsed=0.297s
+Page 8: HTTP 200 | raw=15 | DuckDuckGo=15 | new_unique=15 | attempts=1 | elapsed=0.295s
+Page 9: HTTP 200 | raw=15 | DuckDuckGo=15 | new_unique=15 | attempts=1 | elapsed=0.3s
+Page 10: HTTP 200 | raw=15 | DuckDuckGo=15 | new_unique=15 | attempts=1 | elapsed=0.297s
+Page 11: HTTP 200 | raw=15 | DuckDuckGo=15 | new_unique=15 | attempts=1 | elapsed=0.287s
+Page 12: HTTP 200 | raw=15 | DuckDuckGo=15 | new_unique=15 | attempts=1 | elapsed=0.286s
+Page 13: HTTP 200 | raw=15 | DuckDuckGo=15 | new_unique=15 | attempts=1 | elapsed=0.298s
+Page 14: HTTP 200 | raw=15 | DuckDuckGo=15 | new_unique=15 | attempts=1 | elapsed=0.365s
+Page 15: HTTP 200 | raw=15 | DuckDuckGo=15 | new_unique=15 | attempts=1 | elapsed=0.285s
+Page 16: HTTP 200 | raw=0 | DuckDuckGo=0 | new_unique=0 | attempts=1 | elapsed=0.062s

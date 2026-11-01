@@ -1,0 +1,18 @@
+2026-11-01 19:27:52,193 | INFO | Starting SearXNG-only collection | query='machine learning research papers filetype:pdf' | limit=500 | max_pages=50
+2026-11-01 19:27:52,997 | INFO | Page 1/50 | HTTP 200 | raw=10 | DDG=10 | new_unique=10 | total=10 | 0.804s
+2026-11-01 19:27:56,341 | INFO | Page 2/50 | HTTP 200 | raw=15 | DDG=15 | new_unique=14 | total=24 | 0.343s
+2026-11-01 19:27:59,630 | INFO | Page 3/50 | HTTP 200 | raw=15 | DDG=15 | new_unique=13 | total=37 | 0.289s
+2026-11-01 19:28:02,921 | INFO | Page 4/50 | HTTP 200 | raw=15 | DDG=15 | new_unique=15 | total=52 | 0.291s
+2026-11-01 19:28:06,221 | INFO | Page 5/50 | HTTP 200 | raw=15 | DDG=15 | new_unique=15 | total=67 | 0.299s
+2026-11-01 19:28:09,517 | INFO | Page 6/50 | HTTP 200 | raw=14 | DDG=14 | new_unique=14 | total=81 | 0.296s
+2026-11-01 19:28:12,814 | INFO | Page 7/50 | HTTP 200 | raw=15 | DDG=15 | new_unique=15 | total=96 | 0.297s
+2026-11-01 19:28:16,110 | INFO | Page 8/50 | HTTP 200 | raw=15 | DDG=15 | new_unique=15 | total=111 | 0.295s
+2026-11-01 19:28:19,410 | INFO | Page 9/50 | HTTP 200 | raw=15 | DDG=15 | new_unique=15 | total=126 | 0.300s
+2026-11-01 19:28:22,707 | INFO | Page 10/50 | HTTP 200 | raw=15 | DDG=15 | new_unique=15 | total=141 | 0.297s
+2026-11-01 19:28:25,994 | INFO | Page 11/50 | HTTP 200 | raw=15 | DDG=15 | new_unique=15 | total=156 | 0.287s
+2026-11-01 19:28:29,280 | INFO | Page 12/50 | HTTP 200 | raw=15 | DDG=15 | new_unique=15 | total=171 | 0.286s
+2026-11-01 19:28:32,579 | INFO | Page 13/50 | HTTP 200 | raw=15 | DDG=15 | new_unique=15 | total=186 | 0.298s
+2026-11-01 19:28:35,945 | INFO | Page 14/50 | HTTP 200 | raw=15 | DDG=15 | new_unique=15 | total=201 | 0.365s
+2026-11-01 19:28:39,230 | INFO | Page 15/50 | HTTP 200 | raw=15 | DDG=15 | new_unique=15 | total=216 | 0.285s
+2026-11-01 19:28:42,292 | INFO | Page 16/50 | HTTP 200 | raw=0 | DDG=0 | new_unique=0 | total=216 | 0.062s
+2026-11-01 19:28:42,332 | INFO | Finished | status=PARTIAL | unique=216/500 | stop=duckduckgo_engine_unresponsive

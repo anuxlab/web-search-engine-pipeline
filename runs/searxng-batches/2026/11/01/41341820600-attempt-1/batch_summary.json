@@ -1,0 +1,39 @@
+{
+  "batch_status": "PARTIAL",
+  "query_count": 1,
+  "repeat_count": 1,
+  "expected_task_count": 1,
+  "artifacts_received": 1,
+  "aggregate_unique_rows": 216,
+  "queries": [
+    {
+      "query_index": 1,
+      "query": "machine learning research papers filetype:pdf",
+      "requested_result_limit": 500,
+      "repeat_count_requested": 1,
+      "repeat_count_completed": 1,
+      "unique_results_per_repeat": [
+        216
+      ],
+      "minimum_unique_results": 216,
+      "maximum_unique_results": 216,
+      "mean_unique_results": 216.0,
+      "exact_result_set_repeatability": null,
+      "mean_pairwise_jaccard": null,
+      "all_repeats_reached_target": false,
+      "repeats": [
+        {
+          "query": "machine learning research papers filetype:pdf",
+          "repeat_index": 1,
+          "status": "PARTIAL",
+          "unique_result_count": 216,
+          "requested_limit": 500,
+          "pages_succeeded": 16,
+          "pages_attempted": 16,
+          "total_request_seconds": 5.092,
+          "stop_reason": "duckduckgo_engine_unresponsive"
+        }
+      ]
+    }
+  ]
+}

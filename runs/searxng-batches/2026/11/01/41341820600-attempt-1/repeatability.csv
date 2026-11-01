@@ -1,0 +1,2 @@
+﻿query_index,query,repeat_index,status,unique_result_count,requested_limit,pages_attempted,pages_succeeded,total_request_seconds,stop_reason
+1,machine learning research papers filetype:pdf,1,PARTIAL,216,500,16,16,5.092,duckduckgo_engine_unresponsive
