@@ -1,0 +1,14 @@
+SearXNG 2026.11.1-9ded3bec1
+Updating certificates in /etc/ssl/certs...
+0 added, 0 removed; done.
+Running hooks in /etc/ca-certificates/update.d...
+done.
+[INFO] Starting granian (main PID: 1)
+[INFO] Listening at: http://[::]:8080
+[INFO] Spawning worker-1 with PID: 619
+2026-11-01 18:07:40,664 ERROR:searx.engines: (PID 619) ahmia: can't register engine (loading engine failed)
+2026-11-01 18:07:40,767 ERROR:searx.engines: (PID 619) torch: can't register engine (loading engine failed)
+2026-11-01 18:07:40,797 WARNING:searx.botdetection.config: missing config file: /etc/searxng/limiter.toml
+[INFO] Started worker-1
+2026-11-01 18:07:44,488 ERROR:searx.botdetection: X-Forwarded-For nor X-Real-IP header is set!
+2026-11-01 18:07:49,039 ERROR:searx.result_types: filter_urls (field 'url'): ignore AttributeError("'MainResult' object has no attribute 'doi'") from callback /usr/local/searxng/searx/result_types/_base.py:341
