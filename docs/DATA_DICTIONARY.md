@@ -34,7 +34,7 @@ packet-level HTTP capture.
 ## `metadata.json`
 
 Contains workflow name, run ID, attempt, run number, actor, Git ref, commit SHA,
-query, requested maximum, region, page size, collector-step outcome, and
+query, requested maximum, region, provider page size, collector-step outcome, and
 recorded timestamp.
 
 ## Logs and summary

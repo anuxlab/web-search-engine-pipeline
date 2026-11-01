@@ -98,6 +98,45 @@ def test_pagination_stops_when_provider_repeats_page(monkeypatch):
     assert bundle["stop_reason"] == "provider_repeated_page"
 
 
+
+def test_short_pages_do_not_stop_pagination(monkeypatch):
+    calls = []
+
+    class FakeDDGS:
+        def __init__(self, timeout=20):
+            pass
+
+        def text(self, query, **kwargs):
+            page = kwargs["page"]
+            calls.append(page)
+            if page == 1:
+                return [
+                    {"title": "A", "href": "https://example.com/a"},
+                    {"title": "B", "href": "https://example.com/b"},
+                ]
+            if page == 2:
+                return [
+                    {"title": "C", "href": "https://example.com/c"},
+                ]
+            return []
+
+    monkeypatch.setattr(collector, "DDGS", FakeDDGS)
+    bundle = collector.fetch_paginated_results(
+        "query", 30, page_size=10, page_delay_seconds=0
+    )
+
+    assert calls == [1, 2, 3]
+    assert bundle["pages_succeeded"] == 3
+    assert bundle["raw_unique_url_count"] == 3
+    assert bundle["stop_reason"] == "provider_returned_empty_page"
+
+
+def test_provider_page_size_is_fixed_at_ten():
+    import pytest
+    with pytest.raises(ValueError, match="fixed at 10"):
+        collector.fetch_paginated_results("query", 30, page_size=50)
+
+
 def test_later_page_failure_returns_partial_results(monkeypatch):
     class FakeDDGS:
         def __init__(self, timeout=20):

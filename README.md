@@ -15,7 +15,7 @@ Each run archive contains:
 
 | File | Purpose |
 |---|---|
-| `raw_results.json` | Page-by-page raw provider dictionaries plus flattened raw records, before cleaning |
+| `raw_results.json` | Page-by-page raw result dictionaries and flattened raw results, before cleaning |
 | `cleaned_results.json` | Normalized, unique records |
 | `cleaned_results.csv` | Spreadsheet export of the cleaned records |
 | `run.log` | Runner environment, dependency installation output, and collector console logs |
@@ -32,8 +32,9 @@ commands and Python collection activity executed in the collector shell step.
 - Search query (required text)
 - Result maximum: `10`, `30`, `50`, `100`, `200`, `500`
 - Region: `in-en`, `us-en`, `uk-en`, `wt-wt`
-- Page size: `10`, `20`, `25`, `30`, or `50` results per request
-- Sequential pagination, exponential retries, inter-page delay, and duplicate-page detection
+- Provider page size: fixed at 10 results per request (internal setting)
+- Short pages do not stop pagination; the next page is attempted
+- Automatic page iteration with a safety cap, inter-page delay, and retries
 
 Only `workflow_dispatch` is configured; pushes and pull requests do not start
 this workflow.
@@ -66,7 +67,7 @@ runs/
 2. In repository **Settings → Actions → General → Workflow permissions**, allow
    **Read and write permissions**. This is required for the runner's commit.
 3. Open **Actions → DuckDuckGo Web Search Collector → Run workflow**.
-4. Enter a query and select the result maximum, region, and page size.
+4. Enter a query and select the result maximum and region.
 5. After completion, inspect the `runs/` directory in the repository or download
    the workflow artifact.
 
@@ -98,8 +99,6 @@ python src/search_collector.py \
   --query "electric vehicle routing problem" \
   --limit 50 \
   --region in-en \
-  --page-size 25 \
-  --page-delay 1.0 \
   --output outputs/local-test
 
 pytest -q
@@ -107,13 +106,12 @@ pytest -q
 
 ## Important interpretation of the result limit
 
-The selected number is a maximum requested unique-result count, not a guarantee.
-The collector requests multiple pages using DDGS's `page` argument, preserves
-all page responses, and deduplicates URLs across pages. Pagination stops when
-the target is reached, a page is empty/short, the provider repeats a page, two
-consecutive pages add no new URLs, a later page fails after retries, or the
-safety page cap is reached. Provider-side result depth remains outside the
-collector's control.
+The selected number is the maximum number of unique results the collector
+attempts to gather, not a guarantee. The collector requests up to 10 results
+per page and continues after short pages. DuckDuckGo may still return fewer
+records or stop exposing additional pages. The collector preserves the returned raw
+records and then removes invalid URLs and duplicate normalized URLs from the
+cleaned dataset. The summary reports both counts.
 
 ## Scope
 

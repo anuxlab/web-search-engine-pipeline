@@ -29,17 +29,6 @@ on:
           - "uk-en"
           - "wt-wt"
         default: "in-en"
-      page_size:
-        description: "Results requested per page (smaller batches are gentler)"
-        required: true
-        type: choice
-        options:
-          - "10"
-          - "20"
-          - "25"
-          - "30"
-          - "50"
-        default: "25"
 
 permissions:
   contents: write
@@ -107,7 +96,6 @@ jobs:
           SEARCH_QUERY: ${{ inputs.search_query }}
           RESULT_LIMIT: ${{ inputs.result_limit }}
           SEARCH_REGION: ${{ inputs.region }}
-          PAGE_SIZE: ${{ inputs.page_size }}
           RUN_DIR: ${{ steps.paths.outputs.run_dir }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -130,7 +118,6 @@ jobs:
               --query "$SEARCH_QUERY" \
               --limit "$RESULT_LIMIT" \
               --region "$SEARCH_REGION" \
-              --page-size "$PAGE_SIZE" \
               --page-delay 1.5 \
               --output "$RUN_DIR"
           } 2>&1 | tee -a "$RUN_DIR/run.log"
@@ -142,7 +129,6 @@ jobs:
           QUERY: ${{ inputs.search_query }}
           LIMIT: ${{ inputs.result_limit }}
           REGION: ${{ inputs.region }}
-          PAGE_SIZE: ${{ inputs.page_size }}
           COLLECT_OUTCOME: ${{ steps.collect.outcome }}
         run: |
           set -o pipefail
@@ -199,7 +185,6 @@ jobs:
           QUERY: ${{ inputs.search_query }}
           LIMIT: ${{ inputs.result_limit }}
           REGION: ${{ inputs.region }}
-          PAGE_SIZE: ${{ inputs.page_size }}
           COLLECT_OUTCOME: ${{ steps.collect.outcome }}
         run: |
           set -o pipefail
@@ -221,7 +206,7 @@ jobs:
               "query": os.environ["QUERY"],
               "requested_limit": int(os.environ["LIMIT"]),
               "region": os.environ["REGION"],
-              "page_size": int(os.environ["PAGE_SIZE"]),
+              "page_size": 10,
               "collector_step_outcome": os.environ["COLLECT_OUTCOME"],
               "recorded_at_utc": datetime.now(timezone.utc).isoformat(),
           }
@@ -252,7 +237,7 @@ jobs:
             git pull --rebase origin "$GITHUB_REF_NAME"
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
-          }
+          } 2>&1 | tee -a "$RUN_DIR/run.log"
 
       - name: Upload run archive as workflow artifact
         if: always()

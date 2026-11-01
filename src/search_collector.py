@@ -22,7 +22,7 @@ except ImportError:  # Allows unit tests to run without installing the provider 
 
 LOGGER = logging.getLogger("ddg_collector")
 ALLOWED_LIMITS = {10, 30, 50, 100, 200, 500}
-ALLOWED_PAGE_SIZES = {10, 20, 25, 30, 50}
+PROVIDER_PAGE_SIZE = 10
 DEFAULT_REGION = "in-en"
 DEFAULT_SAFESEARCH = "moderate"
 SEARCH_ENGINE = "DuckDuckGo"
@@ -114,7 +114,7 @@ def fetch_paginated_results(
     query: str,
     limit: int,
     region: str = DEFAULT_REGION,
-    page_size: int = 25,
+    page_size: int = PROVIDER_PAGE_SIZE,
     max_pages: int | None = None,
     retries: int = 3,
     retry_base_seconds: float = 2.0,
@@ -122,17 +122,17 @@ def fetch_paginated_results(
 ) -> dict[str, Any]:
     """Collect pages until target, exhaustion, repeated pages, or a safety cap.
 
-    `page_size` is the number requested from each page. The DDGS documentation
-    exposes a `page` argument and recommends iterating pages. Actual page depth
-    and result counts remain provider-dependent.
+    DDGS/DuckDuckGo is queried in conservative batches of 10. A short page is
+    not treated as exhaustion: pagination continues until an empty/repeated page,
+    duplicate-only streak, requested unique-result target, or safety cap.
 
     A later-page failure returns a partial collection with a recorded error;
     a first-page failure raises because no useful result set was obtained.
     """
     if limit not in ALLOWED_LIMITS:
         raise ValueError(f"limit must be one of {sorted(ALLOWED_LIMITS)}")
-    if page_size not in ALLOWED_PAGE_SIZES:
-        raise ValueError(f"page_size must be one of {sorted(ALLOWED_PAGE_SIZES)}")
+    if page_size != PROVIDER_PAGE_SIZE:
+        raise ValueError(f"DuckDuckGo provider page_size is fixed at {PROVIDER_PAGE_SIZE}")
     if not query.strip():
         raise ValueError("query must not be empty")
     if retries < 1:
@@ -140,8 +140,10 @@ def fetch_paginated_results(
     if DDGS is None:
         raise RuntimeError("Missing dependency: install requirements.txt (ddgs).")
 
-    # Allow extra pages to compensate for duplicates, while keeping a hard cap.
-    calculated_cap = math.ceil(limit / page_size) * 3 + 2
+    # DDGS/DuckDuckGo commonly returns at most 10 items per page even when a
+    # larger max_results value is requested. Keep requests aligned with that cap.
+    # Allow extra pages to compensate for duplicates and short pages.
+    calculated_cap = math.ceil(limit / PROVIDER_PAGE_SIZE) * 3 + 2
     page_cap = min(max_pages or calculated_cap, DEFAULT_MAX_PAGES)
 
     client = DDGS(timeout=20)
@@ -150,7 +152,6 @@ def fetch_paginated_results(
     unique_urls: set[str] = set()
     previous_fingerprints: set[tuple[str, ...]] = set()
     duplicate_only_streak = 0
-    consecutive_errors = 0
     stop_reason = "page_cap_reached"
     page_errors: list[dict[str, Any]] = []
 
@@ -197,7 +198,6 @@ def fetch_paginated_results(
             stop_reason = "later_page_failed_partial_results"
             break
 
-        consecutive_errors = 0
         fingerprint = _page_fingerprint(page_items)
         page_new = 0
 
@@ -247,12 +247,11 @@ def fetch_paginated_results(
             break
 
         if len(page_items) < page_size:
-            stop_reason = "short_page_provider_exhaustion"
             LOGGER.info(
-                "Page %d returned fewer than requested (%d < %d); treating as exhaustion.",
+                "Page %d returned a short page (%d < %d); continuing to the next page "
+                "because short responses do not reliably indicate exhaustion.",
                 page_number, len(page_items), page_size
             )
-            break
 
         if page_number < page_cap and page_delay_seconds > 0:
             time.sleep(page_delay_seconds)
@@ -262,7 +261,8 @@ def fetch_paginated_results(
         "query": query,
         "region": region,
         "requested_unique_result_limit": limit,
-        "page_size": page_size,
+        "page_size": PROVIDER_PAGE_SIZE,
+        "pagination_policy": "continue_after_short_page_until_empty_or_other_stop_condition",
         "pages_attempted": len(pages) + len(page_errors),
         "pages_succeeded": len(pages),
         "raw_result_count": len(flattened_raw),
@@ -340,10 +340,6 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["in-en", "us-en", "uk-en", "wt-wt"],
     )
     parser.add_argument(
-        "--page-size", type=int, default=25, choices=sorted(ALLOWED_PAGE_SIZES),
-        help="Results requested per page (default: 25).",
-    )
-    parser.add_argument(
         "--max-pages", type=int, default=None,
         help="Optional hard cap on pages; otherwise calculated from target and page size.",
     )
@@ -384,13 +380,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         LOGGER.info(
             "Starting paginated search | query=%r | target=%d | page_size=%d",
-            query, args.limit, args.page_size
+            query, args.limit, PROVIDER_PAGE_SIZE
         )
         raw_bundle = fetch_paginated_results(
             query=query,
             limit=args.limit,
             region=args.region,
-            page_size=args.page_size,
+            page_size=PROVIDER_PAGE_SIZE,
             max_pages=args.max_pages,
             page_delay_seconds=args.page_delay,
         )

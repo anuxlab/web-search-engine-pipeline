@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart TD
-  A[Manual workflow dispatch] --> B[Query, target, region, page size]
+  A[Manual workflow dispatch] --> B[Query, target and region]
   B --> C[Create unique run archive]
   C --> D[Install dependencies and capture logs]
   D --> E[Request page 1 from DuckDuckGo]
@@ -24,20 +24,22 @@ flowchart TD
 ## Pagination strategy
 
 The DDGS text-search API exposes `page` and `max_results`; the collector makes
-sequential page calls with a configurable batch size. It does not assume that
-the provider will expose an unlimited number of results.
+sequential page calls requesting 10 results per page. It does not assume that
+the provider will expose an unlimited number of results. A short page is not
+considered proof of exhaustion, because the observed provider response returned
+10 results even when the collector requested a larger batch.
 
 Stop conditions:
 - Requested unique URL target reached.
 - Empty page.
-- Short page (fewer results than requested batch size).
 - Provider repeats an earlier page fingerprint.
 - Two consecutive pages contribute no new valid URLs.
 - Later page fails after retries (preserve partial data).
 - Calculated safety page cap reached.
 
 Transient errors are retried with exponential backoff. Requests are sequential
-and separated by a delay to reduce request pressure.
+and separated by a delay to reduce request pressure. Short pages are logged and
+pagination continues; an empty page is the normal exhaustion signal.
 
 ## Raw versus cleaned data
 
