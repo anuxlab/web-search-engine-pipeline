@@ -1,0 +1,28 @@
+{
+  "search_engine": "DuckDuckGo",
+  "strategy": "paginated",
+  "query": "ieee open access review papers filetype:pdf",
+  "region": "in-en",
+  "requested_unique_result_limit": 50,
+  "provider_page_size": 10,
+  "queries_planned": [
+    "ieee open access review papers filetype:pdf"
+  ],
+  "queries_attempted": 1,
+  "pages_attempted": 1,
+  "pages_succeeded": 0,
+  "raw_result_count": 0,
+  "raw_unique_url_count": 0,
+  "stop_reason": "provider_challenge_or_request_failure",
+  "page_errors": [
+    {
+      "query": "ieee open access review papers filetype:pdf",
+      "page": 1,
+      "status_code": 202,
+      "category": "http_202_challenge_or_throttle",
+      "error": "No results found."
+    }
+  ],
+  "pages": [],
+  "raw_results": []
+}
