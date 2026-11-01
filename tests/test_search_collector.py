@@ -1,176 +1,197 @@
 from pathlib import Path
+import logging
+
+import pytest
 
 from src import search_collector as collector
-from src.search_collector import (
-    ALLOWED_LIMITS,
-    clean_results,
-    normalize_url,
-    extract_domain,
-    write_csv,
-    write_json,
-)
 
 
-def test_allowed_limits():
-    assert ALLOWED_LIMITS == {10, 30, 50, 100, 200, 500}
+def test_allowed_limits_and_page_size():
+    assert collector.ALLOWED_LIMITS == {10, 30, 50, 100, 200, 500}
+    assert collector.PROVIDER_PAGE_SIZE == 10
 
 
 def test_url_normalization_and_validation():
-    assert normalize_url("HTTPS://Example.COM/path#part") == "https://example.com/path"
-    assert normalize_url("javascript:alert(1)") == ""
-    assert normalize_url("not a url") == ""
+    assert collector.normalize_url("HTTPS://Example.COM/path#part") == "https://example.com/path"
+    assert collector.normalize_url("javascript:alert(1)") == ""
+    assert collector.normalize_url("not a url") == ""
 
 
-def test_domain_extraction():
-    assert extract_domain("https://www.example.com/path") == "www.example.com"
+def test_query_variants_are_domain_aware_and_deduplicated():
+    product = collector.build_query_variants("iphone", ["iphone reviews", "  Apple iPhone  ", ""], 8)
+    assert product == ["iphone", "iphone reviews", "Apple iPhone", "iphone specifications", "iphone price", "iphone models"]
+    academic = collector.build_query_variants("deep learning research", max_queries=5)
+    assert "deep learning research research papers" in academic
+    software = collector.build_query_variants("Python API library", max_queries=5)
+    assert "Python API library documentation" in software
 
 
-def test_clean_results_deduplicates_and_ranks():
+def test_clean_results_deduplicates_and_tracks_source_query():
     raw = [
-        {"title": "First", "href": "https://Example.com/a#one", "body": "A"},
+        {"title": "First", "href": "https://Example.com/a#one", "body": "A", "_source_query": "iphone"},
         {"title": "Duplicate", "href": "https://example.com/a#two", "body": "dup"},
-        {"title": "Second", "href": "https://other.example/b", "body": "B"},
+        {"title": "Second", "href": "https://other.example/b", "body": "B", "_source_query": "iphone reviews"},
         {"title": "Bad", "href": "javascript:alert(1)", "body": "bad"},
     ]
-    cleaned = clean_results(raw, "sample", "in-en", "timestamp", 10)
+    cleaned = collector.clean_results(raw, "iphone", "in-en", "timestamp", 10)
     assert len(cleaned) == 2
     assert [row["rank"] for row in cleaned] == [1, 2]
-    assert cleaned[0]["title"] == "First"
-    assert cleaned[0]["url"] == "https://example.com/a"
+    assert cleaned[0]["source_query"] == "iphone"
+    assert cleaned[1]["source_query"] == "iphone reviews"
 
 
-def test_paginated_collection_fetches_multiple_pages_and_deduplicates(monkeypatch):
+def test_paginated_mode_continues_after_short_pages(monkeypatch):
     calls = []
 
     class FakeDDGS:
-        def __init__(self, timeout=20):
-            pass
-
-        def text(self, query, **kwargs):
-            calls.append(kwargs["page"])
-            if kwargs["page"] == 1:
-                rows = [
-                    {"title": f"Item {i}", "href": f"https://example.com/{i}"}
-                    for i in range(1, 10)
-                ]
-                rows.append({"title": "Duplicate one", "href": "https://example.com/1#fragment"})
-                return rows
-            if kwargs["page"] == 2:
-                rows = [
-                    {"title": "Duplicate nine", "href": "https://example.com/9#fragment"},
-                    {"title": "Item ten", "href": "https://example.com/10"},
-                ]
-                rows.extend(
-                    {"title": f"Repeat {i}", "href": f"https://example.com/{i}"}
-                    for i in range(1, 9)
-                )
-                return rows
-            return []
-
-    monkeypatch.setattr(collector, "DDGS", FakeDDGS)
-    bundle = collector.fetch_paginated_results(
-        "query", 10, page_size=10, page_delay_seconds=0
-    )
-    assert calls == [1, 2]
-    assert bundle["raw_result_count"] == 20
-    assert bundle["raw_unique_url_count"] == 10
-    assert bundle["pages_succeeded"] == 2
-    cleaned = clean_results(bundle["raw_results"], "query", "in-en", "ts", 10)
-    assert len(cleaned) == 10
-
-
-def test_pagination_stops_when_provider_repeats_page(monkeypatch):
-    class FakeDDGS:
-        def __init__(self, timeout=20):
-            pass
-
-        def text(self, query, **kwargs):
-            return [
-                {"title": f"A{i}", "href": "https://example.com/a"}
-                for i in range(10)
-            ]
-
-    monkeypatch.setattr(collector, "DDGS", FakeDDGS)
-    bundle = collector.fetch_paginated_results(
-        "query", 500, page_size=10, page_delay_seconds=0
-    )
-    assert bundle["pages_succeeded"] == 2
-    assert bundle["stop_reason"] == "provider_repeated_page"
-
-
-
-def test_short_pages_do_not_stop_pagination(monkeypatch):
-    calls = []
-
-    class FakeDDGS:
-        def __init__(self, timeout=20):
-            pass
-
+        def __init__(self, timeout=20): pass
         def text(self, query, **kwargs):
             page = kwargs["page"]
             calls.append(page)
             if page == 1:
-                return [
-                    {"title": "A", "href": "https://example.com/a"},
-                    {"title": "B", "href": "https://example.com/b"},
-                ]
+                return [{"title": "A", "href": "https://example.com/a"}]
             if page == 2:
-                return [
-                    {"title": "C", "href": "https://example.com/c"},
-                ]
+                return [{"title": "B", "href": "https://example.com/b"}]
             return []
 
     monkeypatch.setattr(collector, "DDGS", FakeDDGS)
-    bundle = collector.fetch_paginated_results(
-        "query", 30, page_size=10, page_delay_seconds=0
-    )
-
+    monkeypatch.setattr(collector.time, "sleep", lambda _: None)
+    bundle = collector.fetch_paginated_results("sample", 30, max_pages=4, page_delay_seconds=0)
     assert calls == [1, 2, 3]
-    assert bundle["pages_succeeded"] == 3
-    assert bundle["raw_unique_url_count"] == 3
+    assert bundle["raw_unique_url_count"] == 2
     assert bundle["stop_reason"] == "provider_returned_empty_page"
 
 
-def test_provider_page_size_is_fixed_at_ten():
-    import pytest
-    with pytest.raises(ValueError, match="fixed at 10"):
-        collector.fetch_paginated_results("query", 30, page_size=50)
-
-
-def test_later_page_failure_returns_partial_results(monkeypatch):
+def test_paginated_mode_preserves_partial_results_on_http_202(monkeypatch):
     class FakeDDGS:
-        def __init__(self, timeout=20):
-            pass
-
+        def __init__(self, timeout=20): pass
         def text(self, query, **kwargs):
             if kwargs["page"] == 1:
-                return [
-                    {"title": f"A{i}", "href": f"https://example.com/{i}"}
-                    for i in range(10)
-                ]
-            raise RuntimeError("simulated rate limit")
+                return [{"title": f"A{i}", "href": f"https://example.com/{i}"} for i in range(10)]
+            logging.getLogger().info("response: https://html.duckduckgo.com/html/ 202")
+            raise RuntimeError("No results found.")
 
     monkeypatch.setattr(collector, "DDGS", FakeDDGS)
     monkeypatch.setattr(collector.time, "sleep", lambda _: None)
-    bundle = collector.fetch_paginated_results(
-        "query", 30, page_size=10, retries=2, page_delay_seconds=0
-    )
+    bundle = collector.fetch_paginated_results("sample", 30, max_pages=3, page_delay_seconds=0,
+        retry_delays=(), blocked_cooldown_seconds=0)
     assert bundle["pages_succeeded"] == 1
-    assert bundle["raw_result_count"] == 10
-    assert bundle["stop_reason"] == "later_page_failed_partial_results"
-    assert len(bundle["page_errors"]) == 1
+    assert bundle["raw_unique_url_count"] == 10
+    assert bundle["page_errors"][0]["status_code"] == 202
+    assert bundle["page_errors"][0]["category"] == "http_202_challenge_or_throttle"
+    assert bundle["stop_reason"] == "provider_challenge_or_request_failure"
 
 
-def test_json_and_csv_exports(tmp_path: Path):
+def test_hybrid_mode_uses_distinct_queries_and_deduplicates(monkeypatch):
+    calls = []
+
+    class FakeDDGS:
+        def __init__(self, timeout=20): pass
+        def text(self, query, **kwargs):
+            calls.append((query, kwargs["page"]))
+            return [
+                {"title": f"{query} result {i}", "href": f"https://example.com/{query.replace(' ', '-')}/{i}"}
+                for i in range(10)
+            ]
+
+    monkeypatch.setattr(collector, "DDGS", FakeDDGS)
+    monkeypatch.setattr(collector.time, "sleep", lambda _: None)
+    bundle = collector.fetch_hybrid_results("iphone", 30, max_queries=4,
+        max_fallback_pages=0, query_delay_seconds=0)
+    assert len(calls) == 3
+    assert all(page == 1 for _, page in calls)
+    assert bundle["queries_planned"] == ["iphone", "iphone reviews", "iphone specifications", "iphone price"]
+    assert bundle["raw_unique_url_count"] == 30
+    assert bundle["stop_reason"] == "requested_unique_result_limit_reached_during_query_diversification"
+
+
+def test_hybrid_continues_to_other_variants_after_202(monkeypatch):
+    calls = []
+
+    class FakeDDGS:
+        def __init__(self, timeout=20): pass
+        def text(self, query, **kwargs):
+            calls.append(query)
+            if query == "iphone":
+                logging.getLogger().info("response: https://html.duckduckgo.com/html/ 202")
+                raise RuntimeError("No results found.")
+            return [{"title": f"{query} {i}", "href": f"https://example.com/{query.replace(' ', '-')}/{i}"} for i in range(10)]
+
+    monkeypatch.setattr(collector, "DDGS", FakeDDGS)
+    monkeypatch.setattr(collector.time, "sleep", lambda _: None)
+    bundle = collector.fetch_hybrid_results("iphone", 10, max_queries=3,
+        max_fallback_pages=0, query_delay_seconds=0, retry_delays=(), blocked_cooldown_seconds=0)
+    assert calls == ["iphone", "iphone reviews"]
+    assert bundle["raw_unique_url_count"] == 10
+    assert bundle["page_errors"][0]["status_code"] == 202
+    assert bundle["pages"][0]["query"] == "iphone reviews"
+
+
+def test_repeated_page_is_detected(monkeypatch):
+    class FakeDDGS:
+        def __init__(self, timeout=20): pass
+        def text(self, query, **kwargs):
+            return [{"title": f"A{i}", "href": "https://example.com/a"} for i in range(10)]
+
+    monkeypatch.setattr(collector, "DDGS", FakeDDGS)
+    monkeypatch.setattr(collector.time, "sleep", lambda _: None)
+    bundle = collector.fetch_paginated_results("sample", 500, max_pages=4, page_delay_seconds=0)
+    assert bundle["pages_succeeded"] == 2
+    assert bundle["stop_reason"] == "provider_repeated_page"
+
+
+def test_json_csv_exports_include_source_query(tmp_path: Path):
     rows = [{
-        "rank": 1, "title": "Example", "url": "https://example.com",
-        "domain": "example.com", "snippet": "snippet", "query": "example",
-        "region": "in-en", "search_engine": "DuckDuckGo",
-        "collected_at": "2026-11-01T00:00:00Z",
+        "rank": 1, "title": "Example", "url": "https://example.com", "domain": "example.com",
+        "snippet": "snippet", "query": "example", "source_query": "example overview",
+        "region": "in-en", "search_engine": "DuckDuckGo", "collected_at": "2026-11-01T00:00:00Z",
     }]
-    json_path = tmp_path / "cleaned_results.json"
-    csv_path = tmp_path / "cleaned_results.csv"
-    write_json(rows, json_path)
-    write_csv(rows, csv_path)
-    assert '"title": "Example"' in json_path.read_text(encoding="utf-8")
-    assert "Example" in csv_path.read_text(encoding="utf-8-sig")
+    json_path, csv_path = tmp_path / "cleaned.json", tmp_path / "cleaned.csv"
+    collector.write_json(rows, json_path)
+    collector.write_csv(rows, csv_path)
+    assert '"source_query": "example overview"' in json_path.read_text(encoding="utf-8")
+    assert "example overview" in csv_path.read_text(encoding="utf-8-sig")
+
+
+def test_writeback_script_fetches_before_staging_and_uses_separate_log():
+    script = (Path(__file__).parents[1] / "scripts" / "archive_run.sh").read_text(encoding="utf-8")
+    assert script.index("sync_branch\n\ngit add") < script.index('git commit -m "chore(search): archive')
+    assert "git pull --rebase" not in script
+    assert 'tee -a "$RUN_DIR/run.log"' not in script
+    assert "repository_writeback.log" in script
+
+
+def test_hybrid_preserves_variant_results_when_pagination_fallback_gets_202(monkeypatch):
+    class FakeDDGS:
+        def __init__(self, timeout=20): pass
+        def text(self, query, **kwargs):
+            if kwargs["page"] == 1:
+                return [{"title": f"{query}-{i}", "href": f"https://example.com/{query.replace(' ', '-')}/{i}"} for i in range(10)]
+            logging.getLogger().info("response: https://html.duckduckgo.com/html/ 202")
+            raise RuntimeError("No results found.")
+
+    monkeypatch.setattr(collector, "DDGS", FakeDDGS)
+    monkeypatch.setattr(collector.time, "sleep", lambda _: None)
+    bundle = collector.fetch_hybrid_results("iphone", 100, max_queries=3,
+        max_fallback_pages=2, query_delay_seconds=0, retry_delays=(), blocked_cooldown_seconds=0)
+    assert bundle["pages_succeeded"] == 3
+    assert bundle["raw_unique_url_count"] == 30
+    assert bundle["stop_reason"] == "pagination_fallback_blocked_or_failed"
+    assert bundle["page_errors"][-1]["status_code"] == 202
+
+
+def test_all_hybrid_variants_blocked_are_returned_as_diagnostics(monkeypatch):
+    class FakeDDGS:
+        def __init__(self, timeout=20): pass
+        def text(self, query, **kwargs):
+            logging.getLogger().info("response: https://html.duckduckgo.com/html/ 202")
+            raise RuntimeError("No results found.")
+
+    monkeypatch.setattr(collector, "DDGS", FakeDDGS)
+    monkeypatch.setattr(collector.time, "sleep", lambda _: None)
+    bundle = collector.fetch_hybrid_results("iphone", 50, max_queries=2,
+        max_fallback_pages=0, query_delay_seconds=0, retry_delays=(), blocked_cooldown_seconds=0)
+    assert bundle["pages"] == []
+    assert bundle["stop_reason"] == "all_query_variants_failed"
+    assert len(bundle["page_errors"]) == 2
+    assert all(error["category"] == "http_202_challenge_or_throttle" for error in bundle["page_errors"])

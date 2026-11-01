@@ -1,61 +1,68 @@
 # Architecture
 
-## Pagination-aware collection flow
+## High-level flow
 
 ```mermaid
 flowchart TD
-  A[Manual workflow dispatch] --> B[Query, target and region]
-  B --> C[Create unique run archive]
-  C --> D[Install dependencies and capture logs]
-  D --> E[Request page 1 from DuckDuckGo]
-  E --> F[Preserve raw page response]
-  F --> G{Target reached?}
-  G -- No --> H[Request next page with backoff/retry]
-  H --> F
-  G -- Yes --> I[Clean and deduplicate across all pages]
-  H --> J{Empty/repeated/no-new page or failure?}
-  J -- Yes --> I
-  I --> K[Write cleaned JSON and CSV]
-  K --> L[Write summary, metadata, logs]
-  L --> M[Commit run folder to branch]
-  L --> N[Upload Actions artifact]
+    A[Manual workflow_dispatch] --> B[Create unique run folder]
+    B --> C[Install pinned DDGS dependency]
+    C --> D{Collection strategy}
+    D -->|Hybrid| E[Generate related query variants]
+    E --> F[Fetch each variant first page]
+    F --> G[Normalize and deduplicate URLs]
+    G --> H{Target reached?}
+    H -->|No| I[Try primary-query pagination fallback]
+    H -->|Yes| J[Persist raw and cleaned outputs]
+    I --> J
+    D -->|Paginated| K[Fetch sequential primary-query pages]
+    K --> G
+    J --> L[Write metadata and summary]
+    L --> M[Fetch/rebase branch before staging]
+    M --> N[Commit archive and write-back transcript]
+    N --> O[Upload complete Actions artifact]
 ```
 
-## Pagination strategy
+## Components
 
-The DDGS text-search API exposes `page` and `max_results`; the collector makes
-sequential page calls requesting 10 results per page. It does not assume that
-the provider will expose an unlimited number of results. A short page is not
-considered proof of exhaustion, because the observed provider response returned
-10 results even when the collector requested a larger batch.
+- `src/search_collector.py`: query expansion, DDGS request wrapper, response-status capture, both collection strategies, URL normalization, deduplication, exports, and summary.
+- `.github/workflows/duckduckgo-search.yml`: manual-only orchestration, run folder creation, dependency setup, metadata, repository write-back, and artifact upload.
+- `scripts/archive_run.sh`: Git synchronization and archive commit logic. It fetches/rebases before staging the run directory; it never appends Git output to `run.log` while Git is operating on that file.
+- `tests/test_search_collector.py`: deterministic provider-mocked regression tests, including HTTP 202 and write-back ordering.
 
-Stop conditions:
-- Requested unique URL target reached.
-- Empty page.
-- Provider repeats an earlier page fingerprint.
-- Two consecutive pages contribute no new valid URLs.
-- Later page fails after retries (preserve partial data).
-- Calculated safety page cap reached.
+## Collection modes
 
-Transient errors are retried with exponential backoff. Requests are sequential
-and separated by a delay to reduce request pressure. Short pages are logged and
-pagination continues; an empty page is the normal exhaustion signal.
+### Hybrid
 
-## Raw versus cleaned data
+- Builds deterministic query variants based on broad intent signals in the primary query.
+- Adds optional user-supplied related queries.
+- Requests page 1 for each distinct query using the DuckDuckGo backend.
+- Deduplicates globally across all variants.
+- If below target, requests later pages for the primary query as a fallback.
+- A failed variant is recorded and does not discard prior or subsequent successful variants.
 
-`raw_results.json` is a JSON object containing request parameters, page-level
-metadata, each page's original DDGS result dictionaries, and a flattened raw
-result list. This preserves the client-returned raw data before normalization.
-It is not a packet-level HTTP capture.
+### Paginated
 
-`cleaned_results.json` and `cleaned_results.csv` are derived from the flattened
-raw list. URLs are restricted to HTTP(S), scheme and host are lowercased,
-fragments are removed, and duplicates are removed across all pages. The first
-occurrence is retained and ranks are reassigned sequentially.
+- Requests sequential pages for one query.
+- A short page is not considered exhaustion.
+- Empty pages, repeated pages, duplicate-only streaks, target completion, page cap, or request failures stop pagination.
+- Later-page failures preserve previously collected results.
 
-## Logging and repository write-back
+## Provider status handling
 
-`run.log` captures environment/dependency/search shell output.
-`collector.log` captures page-level application events and exceptions.
-`metadata.json` stores GitHub run provenance. Each run folder is committed to
-the dispatched branch and uploaded as an artifact.
+DDGS may log a response URL and HTTP status before raising a generic exception. A temporary logging handler captures status codes. HTTP 202 is classified as `http_202_challenge_or_throttle`; it is not converted to an empty result list. The request receives one cooldown retry, then the error is recorded. The workflow continues with other query variants where possible.
+
+The status classification is diagnostic, not a claim about the provider's exact internal reason. The code does not solve challenges, rotate identities, or bypass rate limits.
+
+## Deduplication and provenance
+
+URLs are normalized by lowercasing scheme/host and removing fragments. Query strings and paths are retained. The flattened raw record includes `_source_query` and `_source_page` metadata; original result dictionaries remain in each page's `results` array. Cleaned records expose `source_query` so a result can be traced to the variant that found it.
+
+## Git write-back
+
+1. Workflow concurrency serializes runs on the same branch.
+2. The script fetches the remote branch and rebases before staging any run files.
+3. It commits the run folder and pushes with bounded fetch/rebase retries.
+4. It writes a separate `repository_writeback.log` and commits that file separately.
+5. The Actions artifact is uploaded even when collection or write-back fails.
+
+The write-back transcript is written to a temporary runner file during Git operations. This avoids the previous failure where `tee -a run.log` modified a file after it had been committed and before `git pull --rebase`.

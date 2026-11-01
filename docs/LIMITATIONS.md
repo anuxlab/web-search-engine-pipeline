@@ -1,37 +1,11 @@
-# Limitations and roadmap
+# Limitations and Reliability Notes
 
-## Current phase
-
-- One manual query per workflow run.
-- Sequential page-by-page DuckDuckGo requests using DDGS `page`.
-- Fixed 10-result provider batches and conservative inter-page delay.
-- Short pages do not terminate pagination; the collector continues until an empty page or another explicit stop condition.
-- Exponential retries for transient page failures.
-- Raw page response archive plus flattened raw records.
-- Cross-page URL normalization and deduplication.
-- Partial results retained if a later page fails.
-- Per-run logs, metadata, repository commit and Actions artifact.
-
-## Provider constraints
-
-The DDGS library documents a `page` parameter and recommends iterating over
-pages. However, DuckDuckGo does not provide this unofficial integration with a
-guaranteed result quota or contractual pagination depth. The provider may
-return fewer results, repeat pages, throttle requests, block traffic, or change
-its response behaviour. Therefore 500 is a target ceiling, not a promise.
-
-Short pages do not terminate pagination; the collector continues until an empty page, repeated page, duplicate-only threshold, target, error, or safety cap.
-
-The collector deliberately does not switch to Google, Bing, or other providers:
-the selected backend remains `duckduckgo`. If DuckDuckGo stops returning new
-pages, the run records the stop reason and preserves all results collected so
-far rather than silently changing search engines.
-
-## Next phases
-
-- Query expansion and multiple related search phrases.
-- Domain and file-type classification.
-- Controlled webpage extraction with timeouts, size limits, and site-policy
-  awareness.
-- PDF/document discovery and extraction.
-- Search quality and recall evaluation across repeated runs.
+- DuckDuckGo is a public search service, not a guaranteed bulk-search API. Result availability, page depth, and response behavior vary by query, region, time, and request volume.
+- The requested result count is a target, not a guarantee. Hybrid mode broadens coverage through query variants; it cannot manufacture results or guarantee 500 unique URLs.
+- HTTP 202 observed from the HTML endpoint is classified as a challenge/throttling signal. Its exact provider-side cause cannot be determined from the response status alone.
+- The collector waits and retries conservatively. It does not solve CAPTCHAs, rotate proxies, spoof identities, or bypass access restrictions.
+- Automatic query variants are heuristic and can be less relevant for ambiguous phrases. Users can supply explicit related queries and inspect `source_query`.
+- URL deduplication removes fragments and lowercases scheme/host; it does not attempt full semantic canonicalization across tracking parameters or mirrored content.
+- Unit tests use fake DDGS clients. A live GitHub Actions execution is needed to validate current provider availability.
+- GitHub Actions write-back requires `contents: write`; repository branch protection rules can still prevent bot commits.
+- The complete GitHub platform logs remain in the Actions UI. Run artifacts include workflow/application logs captured by the project, not every internal GitHub runner service message.

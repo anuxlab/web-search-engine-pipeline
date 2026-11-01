@@ -1,51 +1,49 @@
-# Operations guide
+# Operations Guide
 
-## Run manually
+## Recommended first run
 
-1. Open **Actions**.
-2. Select **DuckDuckGo Web Search Collector**.
-3. Click **Run workflow**.
-4. Enter a query and choose the target count.
-5. Choose the search region. The provider batch size is fixed internally at 10 results per page.
-6. Start the workflow.
-7. Inspect page-by-page logs and download the run artifact.
-8. Browse the committed `runs/YYYY/MM/DD/...` directory.
+1. Trigger the workflow manually.
+2. Use a representative query and a target of 30 or 50.
+3. Select `hybrid`, region `in-en`, and `max_queries=8`.
+4. Review `summary.txt`, `raw_results.json`, `cleaned_results.csv`, and `repository_writeback.log`.
+5. If relevance is poor, add more specific related queries in the optional multiline input. If results are too few, increase the query count or target only after inspecting the provider's stop reason.
 
-## Provider page size
+## Interpreting HTTP 202
 
-DuckDuckGo requests are deliberately limited to 10 results per page. The
-collector automatically requests successive pages to build the requested unique
-result set. There is no page-size dropdown because requesting 20–50 results in a
-single call did not make DuckDuckGo return that many records in the observed run.
+The previous run showed `html.duckduckgo.com/html/ 202` on page 2. This is recorded as `http_202_challenge_or_throttle`, not as an empty page. The collector waits before one retry and then continues with other hybrid query variants. It does not try to bypass the provider response.
 
-## Pagination and stopping
+## Interpreting collection status
 
-The collector stops when the unique target is reached, an empty page is
-returned, the provider repeats a page, two pages in a row add no new valid URLs,
-a later page exhausts retries, or the safety cap is reached. Check `summary.txt`
-for the stop reason and `raw_results.json` for page-level counts.
+- `SUCCESS`: the selected unique-result target was reached.
+- `PARTIAL`: some valid unique results were collected, but fewer than requested.
+- `NO_RESULTS`: no valid results were produced.
+- `FAILED`: collection could not run or all initial requests failed.
 
-## Troubleshooting
+A partial result set can still be a successful workflow step; the summary makes the shortfall explicit. A provider limit is not automatically a code failure.
 
-### Fewer results than requested
+## Repository write-back troubleshooting
 
-Check the number of successful pages and `stop_reason` in `raw_results.json`.
-The provider may have exhausted its available results or repeated a page.
-Try a different query formulation or region; do not assume that increasing
-provider page size alone will overcome provider-side limits.
+The write-back script:
 
-### Later page fails
+- fetches and rebases before staging the run folder;
+- commits the run archive;
+- retries a rejected push by fetching/rebasing and pushing again;
+- commits a separate write-back transcript;
+- keeps Git command output outside `run.log` during synchronization.
 
-Previously collected pages are retained. The run is marked partial rather than
-discarding valid results. Inspect `page_errors` in `raw_results.json` and the
-page-level logs.
+If write-back fails, inspect the workflow step and the uploaded `repository_writeback.log`. Confirm the workflow token has `contents: write` and the branch is not protected against GitHub Actions pushes.
 
-### Provider throttles requests
+## Logs and artifacts
 
-Avoid rapid reruns and allow the configured inter-page delay.
-The collector already retries transient failures with exponential backoff.
+The Actions artifact is uploaded under `duckduckgo-run-<run-number>-attempt-<attempt>` and retained for 90 days. The run folder is also committed under `runs/`. GitHub platform-level setup/checkout/upload logs remain visible in the Actions UI and are not all embedded in the run artifact.
 
-### Push rejected
+## Local regression checks
 
-Check repository workflow permissions and branch protection. The job needs
-`contents: write`.
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+python -m py_compile src/search_collector.py tests/test_search_collector.py
+bash -n scripts/archive_run.sh
+```
+
+Tests use mocked DDGS responses; they do not guarantee DuckDuckGo's live availability or result volume.

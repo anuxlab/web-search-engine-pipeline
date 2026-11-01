@@ -1,1 +1,2 @@
+# Keep the provider client pinned so workflow runs are reproducible.
 ddgs==9.16.1

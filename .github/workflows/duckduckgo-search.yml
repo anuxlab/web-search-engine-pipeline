@@ -4,35 +4,42 @@ on:
   workflow_dispatch:
     inputs:
       search_query:
-        description: "Search phrase to send to DuckDuckGo"
+        description: "Primary search phrase"
         required: true
         type: string
       result_limit:
         description: "Maximum number of unique results to collect"
         required: true
         type: choice
-        options:
-          - "10"
-          - "30"
-          - "50"
-          - "100"
-          - "200"
-          - "500"
+        options: ["10", "30", "50", "100", "200", "500"]
         default: "50"
       region:
         description: "DuckDuckGo search region"
         required: true
         type: choice
-        options:
-          - "in-en"
-          - "us-en"
-          - "uk-en"
-          - "wt-wt"
+        options: ["in-en", "us-en", "uk-en", "wt-wt"]
         default: "in-en"
+      collection_strategy:
+        description: "Hybrid uses query diversification first; paginated retains the original single-query method"
+        required: true
+        type: choice
+        options: ["hybrid", "paginated"]
+        default: "hybrid"
+      additional_queries:
+        description: "Optional related search queries (one per line); used by hybrid mode"
+        required: false
+        type: string
+      max_queries:
+        description: "Maximum distinct queries in hybrid mode (including primary query)"
+        required: true
+        type: choice
+        options: ["4", "6", "8", "10", "12"]
+        default: "8"
 
 permissions:
   contents: write
 
+# Serialize manual runs on the same branch to reduce write-back races.
 concurrency:
   group: ddg-search-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -41,14 +48,14 @@ jobs:
   collect:
     name: Collect, archive, and commit results
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-
+    timeout-minutes: 35
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -57,7 +64,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
-      - name: Create run archive and initialize log
+      - name: Create run archive and initialize logs
         id: paths
         env:
           RUN_ID: ${{ github.run_id }}
@@ -68,22 +75,16 @@ jobs:
           import os, re
           from datetime import datetime, timezone
           from pathlib import Path
-
           query = os.environ["SEARCH_QUERY"].strip()
           slug = re.sub(r"[^a-zA-Z0-9]+", "-", query).strip("-").lower()[:48] or "query"
           now = datetime.now(timezone.utc)
-          run_dir = Path("runs") / now.strftime("%Y/%m/%d") / (
-              f"{os.environ['RUN_ID']}-attempt-{os.environ['RUN_ATTEMPT']}-{slug}"
-          )
+          run_dir = Path("runs") / now.strftime("%Y/%m/%d") / f"{os.environ['RUN_ID']}-attempt-{os.environ['RUN_ATTEMPT']}-{slug}"
           run_dir.mkdir(parents=True, exist_ok=True)
           (run_dir / "run.log").write_text(
               "DUCKDUCKGO WORKFLOW RUN LOG\n"
               f"Run ID: {os.environ['RUN_ID']}\n"
               f"Attempt: {os.environ['RUN_ATTEMPT']}\n"
-              f"Query: {query}\n"
-              f"Started (UTC): {now.isoformat()}\n\n",
-              encoding="utf-8",
-          )
+              f"Query: {query}\nStarted (UTC): {now.isoformat()}\n\n", encoding="utf-8")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"run_dir={run_dir.as_posix()}\n")
           print(f"Run archive: {run_dir}")
@@ -96,15 +97,14 @@ jobs:
           SEARCH_QUERY: ${{ inputs.search_query }}
           RESULT_LIMIT: ${{ inputs.result_limit }}
           SEARCH_REGION: ${{ inputs.region }}
+          COLLECTION_STRATEGY: ${{ inputs.collection_strategy }}
+          ADDITIONAL_QUERIES: ${{ inputs.additional_queries }}
+          MAX_QUERIES: ${{ inputs.max_queries }}
           RUN_DIR: ${{ steps.paths.outputs.run_dir }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-          GITHUB_SHA: ${{ github.sha }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -o pipefail
           {
-            echo "===== ENVIRONMENT ====="
+            echo "===== RUN ENVIRONMENT ====="
             python --version
             echo "Runner OS: $RUNNER_OS"
             echo "Repository: $GITHUB_REPOSITORY"
@@ -118,7 +118,11 @@ jobs:
               --query "$SEARCH_QUERY" \
               --limit "$RESULT_LIMIT" \
               --region "$SEARCH_REGION" \
-              --page-delay 1.5 \
+              --strategy "$COLLECTION_STRATEGY" \
+              --additional-queries "$ADDITIONAL_QUERIES" \
+              --max-queries "$MAX_QUERIES" \
+              --page-delay 3.0 \
+              --blocked-cooldown 20 \
               --output "$RUN_DIR"
           } 2>&1 | tee -a "$RUN_DIR/run.log"
 
@@ -129,48 +133,29 @@ jobs:
           QUERY: ${{ inputs.search_query }}
           LIMIT: ${{ inputs.result_limit }}
           REGION: ${{ inputs.region }}
+          STRATEGY: ${{ inputs.collection_strategy }}
           COLLECT_OUTCOME: ${{ steps.collect.outcome }}
         run: |
-          set -o pipefail
-          {
-          python - <<'PY'
+          python - <<'PY' 2>&1 | tee -a "$RUN_DIR/run.log"
           import csv, json, os
           from pathlib import Path
           run_dir = Path(os.environ["RUN_DIR"])
           run_dir.mkdir(parents=True, exist_ok=True)
-          raw_path = run_dir / "raw_results.json"
-          if not raw_path.exists():
-              raw_path.write_text(json.dumps({
-                  "search_engine": "DuckDuckGo",
-                  "pages": [],
-                  "raw_results": [],
-                  "raw_result_count": 0,
-                  "pages_succeeded": 0,
-                  "stop_reason": "collector_did_not_start_or_failed_before_search",
-              }, indent=2) + "\n", encoding="utf-8")
-          clean_path = run_dir / "cleaned_results.json"
-          if not clean_path.exists():
-              clean_path.write_text("[]\n", encoding="utf-8")
+          defaults = {
+              "raw_results.json": {"search_engine":"DuckDuckGo", "strategy":os.environ["STRATEGY"], "pages":[], "raw_results":[], "raw_result_count":0, "pages_succeeded":0, "stop_reason":"collector_did_not_start_or_failed_before_search"},
+              "cleaned_results.json": [],
+          }
+          for name, value in defaults.items():
+              path = run_dir / name
+              if not path.exists(): path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
           csv_path = run_dir / "cleaned_results.csv"
           if not csv_path.exists():
-              fields = ["rank", "title", "url", "domain", "snippet", "query", "region", "search_engine", "collected_at"]
-              with csv_path.open("w", newline="", encoding="utf-8-sig") as handle:
-                  csv.DictWriter(handle, fieldnames=fields).writeheader()
+              fields = ["rank","title","url","domain","snippet","query","source_query","region","search_engine","collected_at"]
+              with csv_path.open("w", newline="", encoding="utf-8-sig") as handle: csv.DictWriter(handle, fieldnames=fields, lineterminator="\n").writeheader()
           summary = run_dir / "summary.txt"
           if not summary.exists():
-              summary.write_text(
-                  "DUCKDUCKGO SEARCH COLLECTION REPORT\n"
-                  f"Status: {os.environ.get('COLLECT_OUTCOME', 'unknown')}\n"
-                  f"Query: {os.environ['QUERY']}\n"
-                  f"Requested maximum: {os.environ['LIMIT']}\n"
-                  f"Region: {os.environ['REGION']}\n"
-                  "No collector summary was generated; inspect run.log.\n",
-                  encoding="utf-8")
-          log = run_dir / "run.log"
-          if not log.exists():
-              log.write_text("Collector shell step did not produce a log.\n", encoding="utf-8")
+              summary.write_text("DUCKDUCKGO SEARCH COLLECTION REPORT\n" f"Status: {os.environ.get('COLLECT_OUTCOME','unknown')}\n" f"Query: {os.environ['QUERY']}\n" f"Requested maximum: {os.environ['LIMIT']}\n" f"Region: {os.environ['REGION']}\n" f"Strategy: {os.environ['STRATEGY']}\nCollector summary unavailable; inspect run.log.\n", encoding="utf-8")
           PY
-          } 2>&1 | tee -a "$RUN_DIR/run.log"
 
       - name: Write run metadata
         if: always()
@@ -185,61 +170,40 @@ jobs:
           QUERY: ${{ inputs.search_query }}
           LIMIT: ${{ inputs.result_limit }}
           REGION: ${{ inputs.region }}
+          STRATEGY: ${{ inputs.collection_strategy }}
+          ADDITIONAL_QUERIES: ${{ inputs.additional_queries }}
+          MAX_QUERIES: ${{ inputs.max_queries }}
           COLLECT_OUTCOME: ${{ steps.collect.outcome }}
         run: |
-          set -o pipefail
-          {
-          python - <<'PY'
+          python - <<'PY' 2>&1 | tee -a "$RUN_DIR/run.log"
           import json, os
           from datetime import datetime, timezone
           from pathlib import Path
-
           run_dir = Path(os.environ["RUN_DIR"])
           metadata = {
               "workflow": "DuckDuckGo Web Search Collector",
-              "run_id": os.environ["RUN_ID"],
-              "run_attempt": int(os.environ["RUN_ATTEMPT"]),
-              "run_number": int(os.environ["RUN_NUMBER"]),
-              "actor": os.environ["ACTOR"],
-              "ref": os.environ["REF"],
-              "commit_sha": os.environ["SHA"],
-              "query": os.environ["QUERY"],
-              "requested_limit": int(os.environ["LIMIT"]),
-              "region": os.environ["REGION"],
-              "page_size": 10,
+              "run_id": os.environ["RUN_ID"], "run_attempt": int(os.environ["RUN_ATTEMPT"]),
+              "run_number": int(os.environ["RUN_NUMBER"]), "actor": os.environ["ACTOR"],
+              "ref": os.environ["REF"], "commit_sha": os.environ["SHA"],
+              "query": os.environ["QUERY"], "requested_limit": int(os.environ["LIMIT"]),
+              "region": os.environ["REGION"], "strategy": os.environ["STRATEGY"],
+              "additional_queries": [x.strip() for x in os.environ.get("ADDITIONAL_QUERIES", "").splitlines() if x.strip()],
+              "max_queries": int(os.environ["MAX_QUERIES"]), "provider_page_size": 10,
               "collector_step_outcome": os.environ["COLLECT_OUTCOME"],
               "recorded_at_utc": datetime.now(timezone.utc).isoformat(),
           }
-          (run_dir / "metadata.json").write_text(
-              json.dumps(metadata, indent=2, ensure_ascii=False) + "\n",
-              encoding="utf-8",
-          )
+          (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
           PY
-          } 2>&1 | tee -a "$RUN_DIR/run.log"
 
       - name: Commit run outputs to repository
+        id: writeback
         if: always()
+        continue-on-error: true
         env:
           RUN_DIR: ${{ steps.paths.outputs.run_dir }}
-          GH_TOKEN: ${{ github.token }}
-          COLLECT_OUTCOME: ${{ steps.collect.outcome }}
-        run: |
-          set -euo pipefail
-          {
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$RUN_DIR"
+        run: bash scripts/archive_run.sh
 
-          if git diff --cached --quiet; then
-            echo "No run files changed; nothing to commit."
-          else
-            git commit -m "chore(search): archive DuckDuckGo run ${GITHUB_RUN_ID}"
-            git pull --rebase origin "$GITHUB_REF_NAME"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
-          fi
-          } 2>&1 | tee -a "$RUN_DIR/run.log"
-
-      - name: Upload run archive as workflow artifact
+      - name: Upload complete run archive
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -248,8 +212,15 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
-      - name: Fail workflow if collection failed
-        if: steps.collect.outcome == 'failure'
+      - name: Report overall workflow status
+        if: always()
+        env:
+          COLLECT_OUTCOME: ${{ steps.collect.outcome }}
+          WRITEBACK_OUTCOME: ${{ steps.writeback.outcome }}
         run: |
-          echo "Search collection failed. Logs and failure outputs were archived where possible."
-          exit 1
+          echo "Collector outcome: $COLLECT_OUTCOME"
+          echo "Repository write-back outcome: $WRITEBACK_OUTCOME"
+          if [[ "$COLLECT_OUTCOME" == "failure" || "$WRITEBACK_OUTCOME" == "failure" ]]; then
+            echo "Collection or repository write-back failed. Inspect the run artifact and step logs."
+            exit 1
+          fi
