@@ -1,0 +1,26 @@
+{
+  "provider": "ddg-lite",
+  "query": "machine learning research papers filetype:pdf",
+  "region": "in-en",
+  "requested_pages": 5,
+  "provider_info": {
+    "pagination_supported_by_interface": true,
+    "pagination_mode": "server-provided HTML continuation form",
+    "note": "Uses returned form fields; no challenge solving or access-control bypass. Interface is undocumented and may change."
+  },
+  "pages": [
+    {
+      "page": 1,
+      "http_status": 202,
+      "elapsed_seconds": 0.064,
+      "returned_count": 0,
+      "new_unique_count": 0,
+      "error": "HTTP 202",
+      "response_excerpt": "<!-- <!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\" \"http://www.w3.org/TR/html4/loose.dtd\"> -->\n<!DOCTYPE html>\n<html lang=\"en\">\n\n<head>\n    <link rel=\"canonical\" href=\"https://duckduckgo.com/\">\n    <meta http-equiv=\"content-type\" content=\"text/html; charset=UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=1\">\n    <meta name=\"referrer\" content=\"origin\">\n    <title>\n        DuckDuckGo\n    </title>\n    <link rel=\"preload\" href=\"/font/ProximaNova-Reg-webfont.woff2\" as=\"font\" type=\"font/woff2\" crossorigin=\"anonymous\">\n    <link rel=\"preload\" href=\"/font/ProximaNova-Sbold-webfont.woff2\" as=\"font\" type=\"font/woff2\" crossorigin=\"anonymous\">\n    <link title=\"DuckDuckGo (Lite)\" type=\"application/opensearchdescription+xml\" rel=\"search\" href=\"//duckduckgo.com/opensearch_lite_v2.xml\">\n    <link rel=\"icon\" href=\"//duckduckgo.com/favicon.ico\" type=\"image/x-icon\"/>\n    <link id=\"icon60\" rel=\"apple-touch-icon\" href=\"//duckduckgo.com/assets/icons/meta/DDG-iOS-icon_60x60.png?v=2\"/>\n    <link id=\"icon76\" rel=\"apple-touch-icon\" sizes=\"76x76\" href=\"//duckduckgo.com/assets/icons/meta/DDG-iOS-icon_76x76.png?v=2\"/>\n    <link id=\"icon120\" rel=\"apple-touch-icon\" sizes=\"120x120\" href=\"//duckduckgo.com/assets/icons/meta/DDG-iOS-icon_120x120.png?v=2\"/>\n    <link id=\"icon152\" rel=\"apple-touch-icon\" sizes=\"152x152\" href=\"//duckduckgo.com/assets/icons/meta/DDG-iOS-icon_152x152.png?v=2\"/>\n    <link rel=\"image_src\" href=\"//duckduckgo.com/assets/icons/meta/DDG-icon_256x256.png\">\n    <link rel=\"stylesheet\" media=\"handheld, all\" href=\"//duckduckgo.com/dist/l.304bf63bbd053ee46b28.css\" type=\"text/css\"/>\n    <link rel=\"stylesheet\" media=\"handheld, all\" href=\"//duckduckgo.com/dist/lc.844e8ff9baa78da64b59.css\" type=\"text/css\"/>\n</head>\n\n<body>\n    <a name=\"top\"></a>\n    <center id=\"lite_wrapper\">\n        <br>\n        <a class=\"header-url\" href=\"/lite/\">\n            <span class=\"header\">DuckDuckGo</span>\n        </a>\n        <br><br>\n\n        \n        <iframe name=\"ifr\" width=\"0\" height=\"0\" border=\"0\" class=\"hidden\"></iframe>\n        <form id=\"img-form\" action=\"//duckduckgo.com/anomaly.js?sv=lite&cc=sre&ti=1793556440&gk=d4cd0dabcf4caa22ad92fab40844c786&p=0722e921ceaa4b55955593bb7924907d-d7e3fd9ea44735d0a92822cf7e2c1550-c31230601efbdd24503b4b93dfa078a6-d43c874aa8139cc89d89030b110188cc-48311bae890ba41f40372309cbd49b09-0896796c55ca6d11922c7cb7d3271ddc-c8b4f0933a6db646c86be339bcdf9808-658241567de2507e5a545d97decb3a59-6211"
+    }
+  ],
+  "raw_page_count": 1,
+  "raw_result_count": 0,
+  "unique_result_count": 0,
+  "fatal_error": null
+}
